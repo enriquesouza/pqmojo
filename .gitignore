@@ -1,0 +1,9 @@
+.pixi/
+.conda/
+output/
+*.conda
+*.mojopkg
+*.movpkg
+/scratch_verify
+__pycache__/
+.DS_Store

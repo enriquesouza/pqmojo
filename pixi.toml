@@ -1,0 +1,35 @@
+[workspace]
+authors = ["Enrique Souza"]
+channels = ["conda-forge", "https://conda.modular.com/max-nightly", "https://conda.modular.com/max", "https://repo.prefix.dev/modular-community"]
+preview = ["pixi-build"]
+description = "libpq for Mojo — zero Python, runtime dlopen, text protocol"
+name = "pqmojo"
+platforms = ["osx-arm64"]
+version = "0.1.0"
+license = "MIT"
+license-file = "LICENSE"
+readme = "README.md"
+homepage = "https://github.com/enriquesouza/pqmojo"
+repository = "https://github.com/enriquesouza/pqmojo"
+
+[tasks]
+verify = { cmd = "mojo run -I . scratch_verify.mojo" }
+
+[dependencies]
+mojo = "=1.0.0"
+
+[package]
+name = "pqmojo"
+version = "0.1.0"
+
+[package.build]
+backend = { name = "pixi-build-mojo", version = "0.*" }
+
+[package.host-dependencies]
+mojo-compiler = "=1.0.0"
+
+[package.build-dependencies]
+mojo-compiler = "=1.0.0"
+
+[package.run-dependencies]
+mojo-compiler = "=1.0.0"
