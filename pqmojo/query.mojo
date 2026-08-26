@@ -11,7 +11,7 @@ every geo distance — never re-implement it.
 """
 
 from std.collections.span import Span
-from std.ffi import external_call
+from std.ffi import c_size_t, c_ssize_t, external_call
 
 from .conn import PgConn
 from .ffi import (
@@ -144,7 +144,7 @@ def exec_params(
     var addr_arr = Int(0)
     var bufs = List[CharPtr]()
     if n > 0:
-        addr_arr = external_call["malloc", Int](n * 8)
+        addr_arr = Int(external_call["malloc", CharPtr](c_size_t(n * 8)))
         var slots = Pointer[Int64, MutAnyOrigin](
             unsafe_from_address=addr_arr
         )
@@ -160,7 +160,9 @@ def exec_params(
     for i in range(len(bufs)):
         c_free(bufs[i])
     if addr_arr != 0:
-        external_call["free", NoneType](addr_arr)
+        _ = external_call["free", c_ssize_t](
+            CharPtr(unsafe_from_address=addr_arr)
+        )
     c_free(sql_buf)
 
     if res == 0:

@@ -8,7 +8,7 @@ hood. PGconn*/PGresult*/char* cross the boundary as opaque Int addresses with
 """
 
 from std.collections.span import Span
-from std.ffi import dlopen, external_call
+from std.ffi import c_size_t, c_ssize_t, dlopen, external_call
 from std.memory import Pointer, stack_allocation
 from std.python._cpython import ExternalFunction, _DLHandle
 
@@ -113,9 +113,7 @@ struct PgSymbols(Copyable, Movable):
 def c_string(s: String) -> CharPtr:
     """NUL-terminated malloc'd copy of a Mojo String; release with c_free."""
     var b = s.as_bytes()
-    var out = CharPtr(unsafe_from_address=external_call["malloc", Int](
-        len(b) + 1
-    ))
+    var out = external_call["malloc", CharPtr](c_size_t(len(b) + 1))
     for i in range(len(b)):
         out[unsafe_offset=i] = b[i]
     out[unsafe_offset=len(b)] = 0
@@ -123,7 +121,7 @@ def c_string(s: String) -> CharPtr:
 
 
 def c_free(p: CharPtr):
-    external_call["free", NoneType](Int(p))
+    _ = external_call["free", c_ssize_t](p)
 
 
 def text_of(addr: Int) -> String:
