@@ -19,6 +19,11 @@ comptime RTLD_NOW: Int32 = 2
 
 comptime CONNECTION_OK: Int32 = 0
 
+# PGresult status codes (libpq libpq-fe.h PGRES_*).
+comptime PGRES_EMPTY_QUERY: Int32 = 0
+comptime PGRES_COMMAND_OK: Int32 = 1
+comptime PGRES_TUPLES_OK: Int32 = 2
+
 
 def libpq_candidates() -> List[String]:
     """Probe order for the runtime dlopen of libpq."""
@@ -46,6 +51,16 @@ comptime _FnGetisnull = def(Int, Int32, Int32) thin abi("C") -> Int32
 comptime _FnClear = def(Int) thin abi("C") -> NoneType
 comptime _FnFinish = def(Int) thin abi("C") -> NoneType
 comptime _FnParameterStatus = def(Int, CharPtr) thin abi("C") -> Int
+comptime _FnSendQuery = def(Int, CharPtr) thin abi("C") -> Int32
+comptime _FnSendQueryParams = def(
+    Int, CharPtr, Int32, Int, Int, Int, Int, Int32
+) thin abi("C") -> Int32
+comptime _FnGetResult = def(Int) thin abi("C") -> Int
+comptime _FnConsumeInput = def(Int) thin abi("C") -> Int32
+comptime _FnIsBusy = def(Int) thin abi("C") -> Int32
+comptime _FnSocket = def(Int) thin abi("C") -> Int32
+comptime _FnResultStatus = def(Int) thin abi("C") -> Int32
+comptime _FnResultErrorMessage = def(Int) thin abi("C") -> Int
 
 comptime _PQconnectdb = ExternalFunction["PQconnectdb", _FnConnectdb]
 comptime _PQstatus = ExternalFunction["PQstatus", _FnStatus]
@@ -59,6 +74,18 @@ comptime _PQclear = ExternalFunction["PQclear", _FnClear]
 comptime _PQfinish = ExternalFunction["PQfinish", _FnFinish]
 comptime _PQparameterStatus = ExternalFunction[
     "PQparameterStatus", _FnParameterStatus
+]
+comptime _PQsendQuery = ExternalFunction["PQsendQuery", _FnSendQuery]
+comptime _PQsendQueryParams = ExternalFunction[
+    "PQsendQueryParams", _FnSendQueryParams
+]
+comptime _PQgetResult = ExternalFunction["PQgetResult", _FnGetResult]
+comptime _PQconsumeInput = ExternalFunction["PQconsumeInput", _FnConsumeInput]
+comptime _PQisBusy = ExternalFunction["PQisBusy", _FnIsBusy]
+comptime _PQsocket = ExternalFunction["PQsocket", _FnSocket]
+comptime _PQresultStatus = ExternalFunction["PQresultStatus", _FnResultStatus]
+comptime _PQresultErrorMessage = ExternalFunction[
+    "PQresultErrorMessage", _FnResultErrorMessage
 ]
 
 
@@ -82,6 +109,14 @@ struct PgSymbols(Copyable, Movable):
     var clear: _PQclear.type
     var finish: _PQfinish.type
     var parameter_status: _PQparameterStatus.type
+    var send_query: _FnSendQuery
+    var send_query_params: _FnSendQueryParams
+    var get_result: _FnGetResult
+    var consume_input: _FnConsumeInput
+    var is_busy: _FnIsBusy
+    var socket_fn: _FnSocket
+    var result_status: _FnResultStatus
+    var result_error_message: _FnResultErrorMessage
 
     def __init__(
         out self,
@@ -96,6 +131,14 @@ struct PgSymbols(Copyable, Movable):
         clear: _PQclear.type,
         finish: _PQfinish.type,
         parameter_status: _PQparameterStatus.type,
+        send_query: _FnSendQuery,
+        send_query_params: _FnSendQueryParams,
+        get_result: _FnGetResult,
+        consume_input: _FnConsumeInput,
+        is_busy: _FnIsBusy,
+        socket_fn: _FnSocket,
+        result_status: _FnResultStatus,
+        result_error_message: _FnResultErrorMessage,
     ):
         self.connectdb = connectdb
         self.status = status
@@ -108,6 +151,14 @@ struct PgSymbols(Copyable, Movable):
         self.clear = clear
         self.finish = finish
         self.parameter_status = parameter_status
+        self.send_query = send_query
+        self.send_query_params = send_query_params
+        self.get_result = get_result
+        self.consume_input = consume_input
+        self.is_busy = is_busy
+        self.socket_fn = socket_fn
+        self.result_status = result_status
+        self.result_error_message = result_error_message
 
 
 def c_string(s: String) -> CharPtr:
@@ -176,4 +227,12 @@ def open_libpq() raises -> PgSymbols:
         clear=_PQclear.load(dlh),
         finish=_PQfinish.load(dlh),
         parameter_status=_PQparameterStatus.load(dlh),
+        send_query=_PQsendQuery.load(dlh),
+        send_query_params=_PQsendQueryParams.load(dlh),
+        get_result=_PQgetResult.load(dlh),
+        consume_input=_PQconsumeInput.load(dlh),
+        is_busy=_PQisBusy.load(dlh),
+        socket_fn=_PQsocket.load(dlh),
+        result_status=_PQresultStatus.load(dlh),
+        result_error_message=_PQresultErrorMessage.load(dlh),
     )

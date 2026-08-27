@@ -5,7 +5,7 @@ preview = ["pixi-build"]
 description = "libpq for Mojo — zero Python, runtime dlopen, text protocol"
 name = "pqmojo"
 platforms = ["osx-arm64"]
-version = "0.1.0"
+version = "0.2.0"
 license = "MIT"
 license-file = "LICENSE"
 readme = "README.md"
@@ -14,13 +14,14 @@ repository = "https://github.com/enriquesouza/pqmojo"
 
 [tasks]
 verify = { cmd = "mojo run -I . scratch_verify.mojo" }
+test = { cmd = "sh scripts/run_tests.sh" }
 
 [dependencies]
 mojo = "=1.0.0"
 
 [package]
 name = "pqmojo"
-version = "0.1.0"
+version = "0.2.0"
 
 [package.build]
 backend = { name = "pixi-build-mojo", version = "0.*" }
