@@ -4,7 +4,7 @@ SqlArg lets call sites pass native values straight into execute_args():
 
     var res = execute_args(
         conn,
-        "SELECT id FROM listing_active WHERE filters_array @> $1 LIMIT $2",
+        "SELECT id FROM listing_active WHERE filters_array @> $1 AND $2 = ANY(periods)",
         int_array_literal(filter_ids), window,
     )
 
@@ -12,44 +12,13 @@ Every argument renders to its Postgres TEXT input form at the API edge
 (ints via format_i64, floats via the shortest-round-trip stdlib rendering,
 bools as 't'/'f', lists as array literals) — matching the proven hot-path
 convention that Postgres parses text into whatever type the statement wants.
+SqlArg itself and the scalar renderers live in pqmojo.args so prepared
+statements share the exact same conventions.
 """
 
+from .args import SqlArg, format_f64, format_i64
 from .conn import PgConn
-from .query import PgResult, execute, format_f64, format_i64
-
-
-struct SqlArg(Copyable, Movable):
-    """One bound parameter, already rendered to Postgres input TEXT."""
-
-    var text: String
-
-    @implicit
-    def __init__(out self, value: StringLiteral):
-        self.text = String(value)
-
-    @implicit
-    def __init__(out self, value: String):
-        self.text = String(value)
-
-    @implicit
-    def __init__(out self, value: Int):
-        self.text = format_i64(Int64(value))
-
-    @implicit
-    def __init__(out self, value: Int64):
-        self.text = format_i64(value)
-
-    @implicit
-    def __init__(out self, value: Int32):
-        self.text = format_i64(Int64(value))
-
-    @implicit
-    def __init__(out self, value: Float64):
-        self.text = format_f64(value)
-
-    @implicit
-    def __init__(out self, value: Bool):
-        self.text = "t" if value else "f"
+from .query import PgResult, execute
 
 
 def int_array_literal(vals: List[Int32]) -> String:

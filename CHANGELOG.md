@@ -1,5 +1,63 @@
 # Changelog
 
+## v0.3.0 — 2026-08-27
+
+Server-side prepared statements: the Parse-once/Bind-many extended-protocol
+path for hot queries, integrated with the pool deadpool-StatementCache
+style. **47% faster** details-shaped point lookup vs plain exec_params
+(52.9 -> 28.0 us/op, 10k iters averaged, local socket).
+
+### Added
+
+* **PgStmt** (`pqmojo.stmt`): `conn.prepare(sql) raises -> PgStmt` runs
+  PQprepare synchronously and fails AT PREPARE with the server message
+  (bad SQL, unresolvable parameter contexts); auto-names are minted from a
+  per-session counter (`pqs_auto_N`) via `PgConn.stmt_seq`.
+  `stmt.execute(params)` / `stmt.execute_args(*args: SqlArg)` are strict
+  Bind+Execute round trips reusing the ordinary PgResult scanners;
+  `stmt.deallocate()` is an optional early free (idempotent). Bound to its
+  exact connection — using it after close raises.
+* **`prepare_named(conn, name, sql)`** and module-level
+  `prepare_on(handle, syms, name, sql)` + `execute_prepared_on(...)` cores;
+  `execute_prepared(conn, name, params)` (strict) binds BY NAME on any
+  checked-out conn.
+* **Pool plan integration**: `pool.prepare_on_acquire([(name, sql), ...])`
+  registers a rolling checkout plan AND arms every conn idle right now;
+  freshly-grown and health-replaced conns self-prepare during acquire via
+  epoch markers on PgConn (`prepared_epoch` vs `pool.plan_epoch`) —
+  replacements can never be served planless.
+  `pool.prepare_all(plan) -> Int` is the point-in-time fan-out warmup over
+  idle conns (registers nothing). Bad SQL dies loudly at registration on a
+  short-lived probe connection; duplicate names never wedge the pool
+  because arming replaces deliberately (internal DEALLOCATE + retry).
+* **Non-blocking prepared path**: `send_prepared(conn, name, params)`
+  submits Bind by name through PQsendQueryPrepared (same drain-first,
+  one-in-flight contract); completes with ordinary `poll_result`;
+  `execute_prepared_nonblocking` bundles both.
+* Module layout enabling all of this without import cycles:
+  `pqmojo.result` now hosts PgResult (+ `_parse_int64`, `_first_line`),
+  `pqmojo.args` hosts `format_i64/format_f64` + SqlArg; query.mojo and
+  params.mojo re-export them unchanged so every pre-v0.3 import path keeps
+  resolving. PgSymbols gained prepare/exec_prepared/send_query_prepared —
+  positional external initializers must add them.
+
+### Honest notes
+
+* Postgres REFUSES re-PREPARE over a live statement name ("already
+  exists") at protocol level too; direct duplicates raise, replacement is
+  only inside pool arming. DEALLOCATE has no IF EXISTS.
+* Prepared statements are session-local: freed implicitly at conn close /
+  server termination; no DEALLOCATE-on-close pass exists or is needed.
+* Pool fan-outs report generic errors when they fail mid-run (Mojo
+  exceptions carry no catchable value); the probe validation pass at
+  registration surfaces exact server messages instead.
+* tests/test_prepared_stress hardens the fleet harness beyond v0.2.x:
+  raw wait-status decoding catches signal-killed children that the
+  old `(status >> 8) & 0xFF` check silently accepted, and workers boot
+  exclusively through their own gss-safe pools because a post-fork RAW
+  connect() rides libpq's GSS probe whose Heimdal/xpc state gets forked
+  children SIGKILLed on this macOS.
+
 ## v0.2.0 — 2026-08-27
 
 The deadpool-postgres release: pools, typed columns, arrays, strict errors,

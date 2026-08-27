@@ -3,11 +3,11 @@
 **libpq for Mojo — zero Python, runtime dlopen, text protocol.**
 
 The tokio-postgres/deadpool-postgres analog for Mojo 1.0: connection
-pooling, parameterized queries, typed row scanning, and a non-blocking
-execution path over libpq's C API. libpq is **never linked at build time**
-— the dylib is probed at runtime via `dlopen` (Homebrew,
-postgresql@16/@17/@14, system paths) and symbols are bound with `dlsym`;
-everything crosses the boundary as the TEXT protocol.
+pooling, parameterized queries, **server-side prepared statements**, typed
+row scanning, and a non-blocking execution path over libpq's C API. libpq
+is **never linked at build time** — the dylib is probed at runtime via
+`dlopen` (Homebrew, postgresql@16/@17/@14, system paths) and symbols are
+bound with `dlsym`; everything crosses the boundary as the TEXT protocol.
 
 Generalized from a production nearby-search hot path serving ~30k `SELECT 1`
 round trips/sec per connection.
@@ -100,6 +100,56 @@ row_exists(conn, sql[, params])         # any row?
 scalar_i64(conn, sql[, params])         # Optional[Int64], None when absent
 ```
 
+## Prepared statements — parse/plan ONCE per connection
+
+The biggest DB-side lever over plain `exec_params`: hot queries go through
+libpq's Parse/Bind extended protocol so Postgres parses and plans them one
+time per connection instead of on every request.
+
+```mojo
+var stmt = conn.prepare(
+    "SELECT id, title FROM listing_active WHERE id = $1 LIMIT 1"
+)
+var r = stmt.execute_args(listing_id)   # or stmt.execute(["12345"])
+r.clear()
+stmt.deallocate()                       # optional; sessions free anyway
+```
+
+Prefer pool-integrated form (deadpool StatementCache shape): register a
+plan ONCE per worker and every connection this pool ever serves — warm,
+grown past min_idle, or health-replaced after a stale ping — self-prepares
+before checkout. Call sites then bind BY NAME on whatever conn they get:
+
+```mojo
+pool.prepare_on_acquire([("details", DETAILS_SQL), ("count", COUNT_SQL)])
+...
+var r = execute_prepared(pool.acquire(), "details", [format_i64(listing_id)])
+```
+
+`pool.prepare_all(plan)` is the point-in-time variant: one-shot fan-out
+across all conns idle right now (post-fork lazy-warmup helper; no rolling
+coverage). The non-blocking twin is `send_prepared(conn, name, params)` +
+`poll_result(conn, budget)`.
+
+### Wire-level efficiency notes (honest version)
+
+* Prepared execution still binds EVERY parameter as TEXT
+  (paramFormats=NULL, resultFormat=0) — identical formatting rules to plain
+  exec_params. BYTE-PARITY-SAFE by construction: consumers binding the same
+  literal text get identical parses; which param types are inferred stays a
+  server-side decision exactly like today (`$1::int4`, `$1 = ANY(periods)`,
+  `filters_array @> $1`). A bare target-list `$1` resolves to text on both
+  paths; genuinely unresolvable contexts (`pg_typeof($1)`) now fail loudly
+  AT PREPARE instead of on the first hot call.
+* Statements are SESSION-local: `conn.close()` / server termination frees
+  them implicitly — no DEALLOCATE round trip is ever required on close.
+  Releasing a pooled conn does NOT invalidate its statements (the socket
+  keeps its backend); only health-replaced conns lose theirs, and the pool
+  re-prepares replacements automatically via epoch markers.
+* Duplicate names raise ("prepared statement ... already exists") —
+  Postgres refuses blind re-PREPARE; deliberate replacement happens inside
+  the pool arming paths (internal DEALLOCATE + retry keeps them idempotent).
+
 ## Non-blocking execution (overlap I/O on your own scheduler)
 
 libpq's non-blocking API without the ceremony:
@@ -153,7 +203,16 @@ untouched.
 
 ## Benchmark sanity (M-series local socket, dev DB)
 
-* pooled `acquire+release` hot loop: **~50 ns/op** (health_check off;
+* details-shaped point lookup
+  (`SELECT id, title, neighborhood, price, latitude, longitude FROM
+  listing_active WHERE id = $1 LIMIT 1`), 10k iterations/rep averaged,
+  best of 3:
+  | path | us/op |
+  |---|---|
+  | plain `exec_params` (Parse+Plan every call) | **52.9** |
+  | prepared Bind/Execute | **28.0** |
+  | delta | **-47.0%** |
+* pooled `acquire+release` hot loop: **~50-80 ns/op** (health_check off;
   bookkeeping only)
 * with health ping: bounded below by one `SELECT 1` RTT
 * hot-path cell reads (`col_i64`, `col_bool`, `col_f64`) are zero-copy over

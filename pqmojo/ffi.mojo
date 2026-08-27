@@ -55,6 +55,13 @@ comptime _FnSendQuery = def(Int, CharPtr) thin abi("C") -> Int32
 comptime _FnSendQueryParams = def(
     Int, CharPtr, Int32, Int, Int, Int, Int, Int32
 ) thin abi("C") -> Int32
+comptime _FnPrepare = def(Int, CharPtr, CharPtr, Int32, Int) thin abi("C") -> Int
+comptime _FnExecPrepared = def(
+    Int, CharPtr, Int32, Int, Int, Int, Int32
+) thin abi("C") -> Int
+comptime _FnSendQueryPrepared = def(
+    Int, CharPtr, Int32, Int, Int, Int, Int32
+) thin abi("C") -> Int32
 comptime _FnGetResult = def(Int) thin abi("C") -> Int
 comptime _FnConsumeInput = def(Int) thin abi("C") -> Int32
 comptime _FnIsBusy = def(Int) thin abi("C") -> Int32
@@ -78,6 +85,13 @@ comptime _PQparameterStatus = ExternalFunction[
 comptime _PQsendQuery = ExternalFunction["PQsendQuery", _FnSendQuery]
 comptime _PQsendQueryParams = ExternalFunction[
     "PQsendQueryParams", _FnSendQueryParams
+]
+comptime _PQprepare = ExternalFunction["PQprepare", _FnPrepare]
+comptime _PQexecPrepared = ExternalFunction[
+    "PQexecPrepared", _FnExecPrepared
+]
+comptime _PQsendQueryPrepared = ExternalFunction[
+    "PQsendQueryPrepared", _FnSendQueryPrepared
 ]
 comptime _PQgetResult = ExternalFunction["PQgetResult", _FnGetResult]
 comptime _PQconsumeInput = ExternalFunction["PQconsumeInput", _FnConsumeInput]
@@ -111,6 +125,9 @@ struct PgSymbols(Copyable, Movable):
     var parameter_status: _PQparameterStatus.type
     var send_query: _FnSendQuery
     var send_query_params: _FnSendQueryParams
+    var prepare_fn: _FnPrepare
+    var exec_prepared: _FnExecPrepared
+    var send_query_prepared: _FnSendQueryPrepared
     var get_result: _FnGetResult
     var consume_input: _FnConsumeInput
     var is_busy: _FnIsBusy
@@ -133,6 +150,9 @@ struct PgSymbols(Copyable, Movable):
         parameter_status: _PQparameterStatus.type,
         send_query: _FnSendQuery,
         send_query_params: _FnSendQueryParams,
+        prepare_fn: _FnPrepare,
+        exec_prepared: _FnExecPrepared,
+        send_query_prepared: _FnSendQueryPrepared,
         get_result: _FnGetResult,
         consume_input: _FnConsumeInput,
         is_busy: _FnIsBusy,
@@ -153,6 +173,9 @@ struct PgSymbols(Copyable, Movable):
         self.parameter_status = parameter_status
         self.send_query = send_query
         self.send_query_params = send_query_params
+        self.prepare_fn = prepare_fn
+        self.exec_prepared = exec_prepared
+        self.send_query_prepared = send_query_prepared
         self.get_result = get_result
         self.consume_input = consume_input
         self.is_busy = is_busy
@@ -229,6 +252,9 @@ def open_libpq() raises -> PgSymbols:
         parameter_status=_PQparameterStatus.load(dlh),
         send_query=_PQsendQuery.load(dlh),
         send_query_params=_PQsendQueryParams.load(dlh),
+        prepare_fn=_PQprepare.load(dlh),
+        exec_prepared=_PQexecPrepared.load(dlh),
+        send_query_prepared=_PQsendQueryPrepared.load(dlh),
         get_result=_PQgetResult.load(dlh),
         consume_input=_PQconsumeInput.load(dlh),
         is_busy=_PQisBusy.load(dlh),

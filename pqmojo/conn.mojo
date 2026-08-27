@@ -10,7 +10,9 @@
     post-fork connect — the constraint is structural.
 """
 
+from .args import format_i64
 from .ffi import CONNECTION_OK, CharPtr, PgSymbols, c_free, c_string, open_libpq, text_of
+from .stmt import AUTO_PREFIX, PgStmt, prepare_on
 
 
 struct PgConn(Movable):
@@ -22,13 +24,22 @@ struct PgConn(Movable):
 
     var handle: Int
     var syms: PgSymbols
+    var stmt_seq: Int         # mints unique auto prepared-statement names
+    var prepared_epoch: Int   # pool plan marker; 0 = unprepared
 
     def __init__(out self, handle: Int, syms: PgSymbols):
         self.handle = handle
         self.syms = syms.copy()
+        self.stmt_seq = 0
+        self.prepared_epoch = 0
 
     def close(mut self):
-        """PQfinish; idempotent — a closed conn carries handle 0."""
+        """PQfinish; idempotent — a closed conn carries handle 0.
+
+        The backend session dies with the socket, implicitly discarding every
+        prepared statement created on this conn (Postgres frees session-local
+        plans on disconnect; no DEALLOCATE round trip is required).
+        """
         if self.handle != 0:
             self.syms.finish(self.handle)
             self.handle = 0
@@ -45,6 +56,30 @@ struct PgConn(Movable):
         var v = self.syms.parameter_status(self.handle, n)
         c_free(n)
         return text_of(v)
+
+    def prepare(mut self, sql: String) raises -> PgStmt:
+        """PREPARE sql with an auto-unique per-session name.
+
+        Runs PQprepare synchronously and raises carrying the server message
+        on bad SQL / ambiguous parameters — see pqmojo.stmt for the wire and
+        lifetime rules. The returned PgStmt binds/executes on THIS conn only.
+        """
+        self.stmt_seq += 1
+        var name = AUTO_PREFIX + format_i64(Int64(self.stmt_seq))
+        prepare_on(self.handle, self.syms, name, sql)
+        return PgStmt(name, self.handle, self.syms.copy())
+
+    def prepare_named(mut self, name: String, sql: String) raises:
+        """PREPARE under an explicit caller-chosen name; strict.
+
+        A live duplicate name RAISES ("prepared statement ... already
+        exists") — Postgres refuses blind re-PREPARE; deliberate replace is
+        the pool arming path's job (prepare_or_replace_on). Pool plan
+        integration (`pool.prepare_all`, `pool.prepare_on_acquire`) prepares
+        these names so they can be bound by NAME after checkout via
+        execute_prepared(conn, name, params).
+        """
+        prepare_on(self.handle, self.syms, name, sql)
 
 
 def connect(conninfo: String) raises -> PgConn:

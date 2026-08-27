@@ -8,6 +8,9 @@ waiting on the raw socket through poll(2) up to the given budget:
     ... overlap other work / other sockets here ...
     var res = poll_result(conn, 30_000)
 
+Prepared statements ride the same machinery: send_prepared(name, params)
+submits a Bind/Execute round by statement name; poll_result completes it.
+
 One connection carries ONE in-flight statement: poll it to completion
 before sending the next on the same socket (libpq forbids overlapping
 submits; it has no automatic protocol pipelining). send_query() defensively
@@ -82,6 +85,59 @@ def send_query(mut conn: PgConn, sql: String, params: List[String]) raises:
     if rc2 == 0:
         raise Error("pqmojo: PQsendQueryParams failed: "
                     + text_of(conn.syms.error_message(conn.handle)))
+
+
+def send_prepared(mut conn: PgConn, name: String, params: List[String]) raises:
+    """Submit a PREPARED statement (Bind/Execute by name) without blocking
+    for its result; complete with the ordinary poll_result.
+
+    Same one-in-flight-per-conn contract and stale-result drain as
+    send_query. Parameter values ride TEXT identically, so results are
+    byte-for-byte what execute_prepared would return.
+    """
+    _drain_completed(conn)
+    var name_buf = c_string(name)
+    var n = len(params)
+
+    if n == 0:
+        var rc = conn.syms.send_query_prepared(
+            conn.handle, name_buf, Int32(0), Int(0),
+            Int(0), Int(0), Int32(0)
+        )
+        c_free(name_buf)
+        if rc == 0:
+            raise Error("pqmojo: PQsendQueryPrepared failed: "
+                        + text_of(conn.syms.error_message(conn.handle)))
+        return
+
+    var addr_arr = Int(external_call["malloc", CharPtr](c_size_t(n * 8)))
+    var slots = Pointer[Int64, MutAnyOrigin](unsafe_from_address=addr_arr)
+    var bufs = List[CharPtr]()
+    for i in range(n):
+        var b = c_string(params[i])
+        bufs.append(b)
+        slots[unsafe_offset=i] = Int64(Int(b))
+
+    var rc2 = conn.syms.send_query_prepared(
+        conn.handle, name_buf, Int32(n), addr_arr,
+        Int(0), Int(0), Int32(0)
+    )
+    for i in range(len(bufs)):
+        c_free(bufs[i])
+    _ = external_call["free", c_ssize_t](CharPtr(unsafe_from_address=addr_arr))
+    c_free(name_buf)
+    if rc2 == 0:
+        raise Error("pqmojo: PQsendQueryPrepared failed: "
+                    + text_of(conn.syms.error_message(conn.handle)))
+
+
+def execute_prepared_nonblocking(
+    mut conn: PgConn, name: String, params: List[String]
+) raises -> PgResult:
+    """send_prepared + poll_result with a generous budget — the fully
+    blocking convenience built ON the non-blocking prepared path."""
+    send_prepared(conn, name, params)
+    return poll_result(conn, 600_000)
 
 
 def _wait_readable(fd: Int32, timeout_ms: Int):

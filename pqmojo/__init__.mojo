@@ -2,9 +2,9 @@
 
 libpq for Mojo: zero Python, runtime dlopen, text protocol. The tokio-
 postgres/deadpool analog for Mojo — connection pooling, parameterized
-queries, typed row scanning, and a non-blocking execution path, with libpq
-loaded at RUNTIME (never linked at build time) by probing candidate dylib
-paths.
+queries, server-side prepared statements, typed row scanning, and a
+non-blocking execution path, with libpq loaded at RUNTIME (never linked at
+build time) by probing candidate dylib paths.
 
 Quickstart:
 
@@ -21,6 +21,20 @@ Quickstart:
     res.clear()
     pool.release(conn^)
 
+Hot call sites parse/plan ONCE per connection instead of every request —
+register a plan on the pool (deadpool StatementCache style) or own
+statements directly:
+
+    pool.prepare_on_acquire([("details", DETAILS_SQL)])
+    var r2 = execute_prepared(pool.acquire(), "details",
+                              List[String](format_i64(listing_id)))
+
+or through a handle:
+
+    var stmt = conn.prepare(DETAILS_SQL)
+    var r3 = stmt.execute_args(listing_id)
+    stmt.deallocate()                      # optional; sessions free anyway
+
 Blocking one-liners stay the default; overlap-hungry callers use the
 non-blocking pair instead:
 
@@ -31,7 +45,8 @@ Public API:
 
     -- connections --
     connect(conninfo) raises -> PgConn     open after fork; raises with PQerrorMessage
-    PgConn.close()                         PQfinish, idempotent
+    PgConn.close()                         PQfinish, idempotent (session dies,
+                                           its prepared statements die with it)
     PgConn.parameter_status(name)          cached startup parameter, "" if absent
 
     -- pooling --
@@ -42,6 +57,9 @@ Public API:
     pool.release(conn^)                    move back; close() first => PQfinish
     pool.stats()                           PoolStats(idle, in_use, total_open)
     pool.close()                           retire the whole pool
+    pool.prepare_on_acquire([(name, sql), ...])   rolling checkout plan: every
+                                           warm/grown/replaced conn self-prepares
+    pool.prepare_all([(name, sql), ...]) -> Int   one-shot fan-out over idle conns
 
     -- execution --
     exec_params(conn, sql, params)         legacy lenient path (no status check)
@@ -50,6 +68,16 @@ Public API:
                                            and array literals bind inline
     row_exists(conn, sql[, params])        any row? strict on SQL errors
     scalar_i64(conn, sql[, params])        Optional[Int64]; None on zero rows
+
+    -- prepared statements (Parse once, Bind many) --
+    conn.prepare(sql) raises -> PgStmt     auto-named per-session statement;
+                                           bad SQL raises AT PREPARE time
+    conn.prepare_named(name, sql)          caller-chosen name (replaces silently)
+    prepare_on(handle, syms, name, sql)    low-level core used by pools
+    PgStmt.execute(params) / execute_args(*args)   strict Bind+Execute round trip
+    PgStmt.deallocate()                    early free; optional (implicit at close)
+    execute_prepared(conn, name, params)   Bind by NAME on any pooled conn; strict
+    send_prepared(conn, name, params)      non-blocking submit; poll_result to finish
 
     -- async-friendly (one conn = one in-flight query) --
     send_query(conn, sql, params)          submit without waiting
@@ -80,11 +108,16 @@ Public API:
     construction. A connection opened pre-fork shares one socket across
     children and corrupts the wire protocol.
 """
-from .asyncq import poll_result, send_query
+from .args import SqlArg, format_f64, format_i64
+from .asyncq import (
+    execute_prepared_nonblocking,
+    poll_result,
+    send_prepared,
+    send_query,
+)
 from .conn import PgConn, close_conn, connect
 from .ffi import PgSymbols, libpq_candidates, open_libpq
 from .params import (
-    SqlArg,
     execute_args,
     i64_array_literal,
     int_array_literal,
@@ -99,8 +132,8 @@ from .query import (
     PgResult,
     exec_params,
     execute,
-    format_f64,
-    format_i64,
+    execute_prepared,
     row_exists,
     scalar_i64,
 )
+from .stmt import PgStmt, execute_prepared_on, prepare_on
