@@ -182,5 +182,5 @@ def execute_nonblocking(
     """send_query + poll_result with a generous budget — the fully-blocking
     convenience built ON the non-blocking path (proves both halves share one
     code path)."""
-    send_query(conn, sql, params^)
+    send_query(conn, sql, params)
     return poll_result(conn, 600_000)
