@@ -4,8 +4,10 @@
 
 The tokio-postgres/deadpool-postgres analog for Mojo 1.0: connection
 pooling, parameterized queries, **server-side prepared statements**, typed
-row scanning, and a non-blocking execution path over libpq's C API. libpq
-is **never linked at build time** — the dylib is probed at runtime via
+row scanning, a non-blocking execution path, and **single-thread OVERLAP**
+(K connections multiplexed through one poll(2) window — the v0.4.0 piece
+that closes the async-runtime RPS gap) over libpq's C API. libpq is
+**never linked at build time** — the dylib is probed at runtime via
 `dlopen` (Homebrew, postgresql@16/@17/@14, system paths) and symbols are
 bound with `dlsym`; everything crosses the boundary as the TEXT protocol.
 
@@ -168,6 +170,98 @@ with a fresh budget or close the connection. Most call sites should keep
 plain `execute()` — this path exists so host event loops can drive many
 sockets from one thread.
 
+## Overlap: K connections multiplexed from ONE thread (v0.4.0)
+
+GO and RUST multiplex concurrent DB ops through async runtimes. Mojo has
+no async runtime — but overlap does not need one. It needs K sockets with
+queries in flight and a readiness-driven collector: while Postgres works
+on query A, the wire is busy with query B, and the aggregate leaves
+single-conn RTT behind. `pqmojo.pipeline` is that collector.
+
+```mojo
+from pqmojo import ConnectionPool, PoolConfig
+
+# once per worker, after fork:
+var pool = ConnectionPool(PoolConfig(dsn, max_size=8))
+pool.prepare_on_acquire([("details", DETAILS_SQL)])
+
+# per request — a k=2 window keeps TWO sockets in flight:
+var pipe = pool.checkout_pipeline(2)
+var a = pipe.submit("details", one(id_a))    # request id 0, in flight
+var b = pipe.submit("details", one(id_b))    # request id 1, in flight
+var first = pipe.collect()                   # WHICHEVER finishes first
+var second = pipe.collect()
+first.result.col_text(0, 1)                  # status-checked PgResult
+first.result.clear()                         # house style: explicit clear
+second.result.clear()
+pool.release_pipeline(pipe^)
+```
+
+or the whole-overlap one-liner (M jobs round-robined through k conns,
+results back in SUBMISSION order):
+
+```mojo
+var rs = pool.execute_batch("details", jobs, 2)
+```
+
+`submit()` returns a pipeline-wide request id; `collect()` returns a
+`PipelineResult` (request_id, slot, status-checked PgResult) in COMPLETION
+order — the id is the join key. Window contract: one in-flight statement
+per conn (libpq's rule, made structural), `submit()` raises when all k
+slots are busy, `collect()` raises on SQL errors or when its budget
+expires (queries stay in flight; collect again or release — wedged conns
+close and pool health checks reseal their slots).
+
+Measured on the details-shaped point lookup (`WHERE id = $1`), one Mojo
+thread, M-series local socket, best of 3:
+
+| path | qps | vs 1-conn sequential |
+|---|---|---|
+| `execute_prepared`, 1 conn | 37.6k | 1.00x |
+| `StmtPipeline` k=1 (sanity) | 35.7k | 0.95x |
+| **`StmtPipeline` k=2** | **67.4k** | **1.79x** |
+| `StmtPipeline` k=3 | 90.4k | 2.40x |
+| `StmtPipeline` k=4 | 109.2k | 2.90x |
+| `pool.execute_batch` k=2 | 63.4k | 1.69x |
+
+### Threading model of overlap (honest version)
+
+This is a **single-thread multiplexer, not a worker thread**. Every libpq
+call runs on the owning thread, one connection at a time — libpq's
+thread-safety rule holds trivially and no shared state exists. The
+async-gate alternative (a background C-callback thread driving the socket
+and flagging a Mojo-visible completion) was prototyped and evaluated: the
+pthread mechanism itself works from Mojo (a pure-C thread body executes
+and joins cleanly), but no *useful* C body is sourceable from shippable
+binaries — libpq exports no poll/service loop (only connect-phase
+`PQconnectPoll`/`PQresetPoll`), and producing one would mean runtime `cc`
+invocation or hand-encoded JIT shellcode, both unacceptable in a driver.
+The window delivers the same aggregate-RPS lever with zero cross-thread
+risk to libpq.
+
+### mojoflask route-worker recipe
+
+```mojo
+# after fork, once per worker process:
+var pool = ConnectionPool(PoolConfig(DSN, max_size=4))
+pool.prepare_on_acquire([("details", DETAILS_SQL)])
+
+# inside a route handler (the worker's own thread):
+var pipe = pool.checkout_pipeline(2)          # 2 plan-armed conns
+var rid = pipe.submit("details", one(listing_id))
+var more = pipe.submit("details", one(other_id))
+var r0 = pipe.collect()                       # completion order
+var r1 = pipe.collect()
+# ... r0.result / r1.result; match with .request_id if order matters ...
+r0.result.clear(); r1.result.clear()
+pool.release_pipeline(pipe^)
+```
+
+Sizing: k=2 per route worker is the sweet spot for point lookups (1.8x
+aggregate for one extra socket); k=4 approaches the local loopback
+ceiling (~110k qps here). The window covers exactly the DB leg — for
+compute-between-queries on a single conn, use `send_query`/`poll_result`.
+
 ## What you get from `exec_params` (legacy-compatible)
 
 The v0.1 surface is untouched: `connect`, `exec_params`,
@@ -187,9 +281,13 @@ public on `PgResult` either way.
   *threads inside a worker* (Swift/GCD embedders included) share the pool
   by passing its address — the identical pattern as mojoka states.
 * Verified platform limitation (v0.2.0): a raw `pthread_create()` callback
-  launched from Mojo does not enter the Mojo runtime and never executes its
-  body, so pqmojo cannot spawn helper threads itself. Concurrency =
-  fork + pool, or host-provided threads.
+  launched from Mojo does not enter the Mojo runtime and never executes a
+  MOJO body. v0.4.0 refinement: the thread mechanism itself is sound — a
+  pure-C body executes and joins cleanly — but no useful C body (a
+  libpq poll/service loop) exists in any shippable binary, so pqmojo
+  cannot spawn helper threads itself. Concurrency = fork + pool +
+  **pipeline windows** (single-thread K-conn overlap), or host-provided
+  threads.
 * A connection opened pre-fork shares one socket across children and
   corrupts the wire protocol — `PgConn` is not Copyable precisely so this
   failure cannot happen silently.
@@ -212,6 +310,9 @@ untouched.
   | plain `exec_params` (Parse+Plan every call) | **52.9** |
   | prepared Bind/Execute | **28.0** |
   | delta | **-47.0%** |
+* OVERLAP scaling, same query, one thread (v0.4.0, best of 3):
+  `StmtPipeline` k=2 **67.4k qps (1.79x)**, k=3 90.4k (2.40x), k=4 109.2k
+  (2.90x) vs 37.6k single-conn sequential — see the Overlap section
 * pooled `acquire+release` hot loop: **~50-80 ns/op** (health_check off;
   bookkeeping only)
 * with health ping: bounded below by one `SELECT 1` RTT

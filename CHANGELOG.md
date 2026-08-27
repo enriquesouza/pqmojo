@@ -1,5 +1,80 @@
 # Changelog
 
+## v0.4.0 — 2026-08-27
+
+OVERLAP: K connections multiplexed through ONE thread — the capability that
+closes MOJO's last structural RPS gap vs GO/RUST async runtimes. Aggregate
+throughput on the details-shaped point lookup scales **1.79x (k=2),
+2.40x (k=3), 2.90x (k=4)** over the single-conn sequential ceiling
+(37.6k -> 109.2k qps, one thread, best of 3, local socket), with ZERO
+cross-thread libpq risk.
+
+### Added
+
+* **StmtPipeline** (`pqmojo.pipeline`): a window of K plan-armed conns
+  driven as one readiness-multiplexed unit.
+  `pipe.submit(name, params) -> request_id` Bind/Executes (PQsendQueryPrepared)
+  on the next free slot round-robin; `pipe.collect(timeout_ms=30_000)`
+  poll(2)s ALL in-flight fds AT ONCE, PQconsumeInputs every ready socket,
+  and returns the first completed result as a `PipelineResult`
+  (request_id, slot, status-checked PgResult) in completion order — the
+  request id is the deterministic join key (per-conn results arrive in
+  submission order by protocol). `pipe.execute_batch(name, jobs)` runs M
+  jobs through the window and returns submission-ordered results.
+  `pipe.slots() / pipe.in_flight()` for observability; `pipe.drain()`
+  recycles fully-drained conns and CLOSES any conn with a query still
+  running server-side.
+* **Pool integration**: `pool.checkout_pipeline(k=2, timeout_ms=-1)`
+  acquires k health-checked, plan-armed conns into one window (k clamped
+  to [1, min(k, max_size, 64)]); `pool.release_pipeline(pipe^)` drains and
+  returns every conn (closed slots self-heal via the acquire health
+  check); `pool.execute_batch(name, jobs, k=2)` is the checkout+batch+
+  release one-liner. On mid-batch failure the pipeline is drained before
+  the error re-surfaces generically.
+* **Tests**: `tests/test_pipeline.mojo` (window round-robin, request-id
+  identity across drain cycles, window-full + nothing-in-flight contracts,
+  strict SQL-error propagation, timeout + recovery, k=1 degeneration,
+  release health, k=2-vs-k=1 overlap sanity >=1.25x),
+  `tests/test_pipeline_stress.mojo` (10,001 windowed submit/collect cycles
+  with per-cycle value verification — zero lost completions, 63-65k qps —
+  plus a 6x300 fork()-ed fleet, zero failures),
+  `tests/test_pipeline_bench.mojo` (the scaling table above; gates: k=2
+  >= 1.6x seq, k=4 > k=2, k=1 <= 1.35x seq).
+
+### Design decision (evaluated empirically, honest version)
+
+* The async-gate alternative (option a: a pthread worker whose pure-C body
+  drives libpq socket polling and flags a Mojo-visible completion) was
+  probed on this toolchain. Probe: `pthread_create` from Mojo with a C
+  body (`strlen` as start routine) executes and joins cleanly (rc=0,
+  correct exit value) — the v0.2.0 "threads never run" finding applies
+  ONLY to Mojo bodies. But no USEFUL C body is sourceable: libpq exports
+  no poll/service loop (`nm -gU`: only connect-phase PQconnectPoll /
+  PQresetPoll, PQisthreadsafe, PQregisterThreadLock), no single-argument
+  libc function implements "poll fd until PQconsumeInput-able", and
+  producing one would require runtime `cc` invocation or hand-encoded
+  arm64 JIT shellcode (MAP_JIT + W^X toggles) — both rejected for a
+  driver. Option (b), the single-thread poll-many window, delivers the
+  same aggregate-RPS lever (GO/RUST's effective DB concurrency) with no
+  shared state and no cross-thread libpq access. Where option (a) would
+  additionally win — Mojo compute on the SAME thread while ONE query runs
+  — the existing `send_query`/`poll_result` pair already serves.
+
+### Honest notes
+
+* `collect()` completion order is arbitrary by nature; callers matching
+  results to requests use `request_id`. `execute_batch` reorders into
+  submission order internally.
+* The pollfd scratch assumes darwin's 8-byte `struct pollfd` (this
+  library targets osx-arm64; revisit the stride for other platforms).
+* `pool.execute_batch` mid-batch failures re-raise a generic message
+  (Mojo exceptions carry no catchable value); drive `StmtPipeline`
+  submit/collect directly when the exact server message matters.
+* Window conns come from `pool.acquire()`, so they carry the fork
+  contract and the prepared-plan top-up; a pipeline is ONE worker
+  thread's object — not thread-safe, not Copyable, like everything else
+  here.
+
 ## v0.3.0 — 2026-08-27
 
 Server-side prepared statements: the Parse-once/Bind-many extended-protocol

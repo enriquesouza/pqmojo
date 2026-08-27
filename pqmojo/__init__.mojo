@@ -61,6 +61,17 @@ Public API:
                                            warm/grown/replaced conn self-prepares
     pool.prepare_all([(name, sql), ...]) -> Int   one-shot fan-out over idle conns
 
+    -- overlap (K conns multiplexed from ONE thread) --
+    pool.checkout_pipeline(k=2)            StmtPipeline of k plan-armed conns
+    pipe.submit(name, params) -> rid       Bind/Execute in flight, round robin
+    pipe.collect(timeout_ms=30_000)        PipelineResult (request_id, slot,
+                                           status-checked PgResult); completion
+                                           order, poll(2) across ALL in-flight
+    pipe.execute_batch(name, jobs[, ms])   M jobs through the window ->
+                                           List[PgResult] submission-ordered
+    pool.execute_batch(name, jobs, k=2)    checkout+batch+release one-liner
+    pool.release_pipeline(pipe^)           drain + return; wedged conns close
+
     -- execution --
     exec_params(conn, sql, params)         legacy lenient path (no status check)
     execute(conn, sql[, params])           STRICT: raises carrying server error text
@@ -127,6 +138,7 @@ from .params import (
     text_array_literal,
 )
 from .pgarray import split_postgres_int32_array, split_postgres_text_array
+from .pipeline import PipelineResult, StmtPipeline
 from .pool import ConnectionPool, PoolConfig, PoolStats, gss_safe_dsn
 from .query import (
     PgResult,

@@ -43,7 +43,8 @@ from std.time import perf_counter
 
 from .conn import PgConn, connect
 from .ffi import CharPtr
-from .query import execute
+from .pipeline import MAX_PIPELINE_SLOTS, StmtPipeline
+from .query import PgResult, execute
 from .stmt import prepare_on, prepare_or_replace_on
 
 
@@ -568,3 +569,95 @@ re-PREPARE). Zero idle conns returns 0
         while len(dying) > 0:
             var c = dying.pop()
             c.close()
+
+    # -- overlap: K-conn readiness-multiplexed pipelines (v0.4.0) ----------
+
+    def checkout_pipeline(
+        mut self, k: Int = 2, timeout_ms: Int = -1
+    ) raises -> StmtPipeline:
+        """Check out k healthy, plan-armed conns as ONE readiness-multiplexed
+        window (the GO/RUST-style overlap piece for ONE worker thread).
+
+        k is clamped to [1, min(requested, max_size, 64)] — the window is
+        one in-flight statement per conn by libpq contract. Each conn rides
+        the ordinary acquire() path (health check + prepared-plan top-up),
+        so pipeline conns bind by NAME exactly like execute_prepared.
+        """
+        var n = min(k, self.cfg.max_size)
+        if n > MAX_PIPELINE_SLOTS:
+            n = MAX_PIPELINE_SLOTS
+        if n < 1:
+            n = 1
+        var conns = List[PgConn](capacity=n)
+        var failed = False
+        for _ in range(n):
+            if failed:
+                break
+            try:
+                var c = self.acquire(timeout_ms)
+                conns.append(c^)
+            except:
+                failed = True
+        if failed:
+            while len(conns) > 0:
+                var c = conns.pop()
+                self.release(c^)
+            raise Error(
+                "pqmojo: checkout_pipeline could not acquire " + String(n)
+                + " conns from max_size " + String(self.cfg.max_size)
+                + "; already-checked-out conns were released back"
+            )
+        return StmtPipeline(conns^)
+
+    def release_pipeline(mut self, var pipe: StmtPipeline):
+        """Return a pipeline's conns: fully-drained conns go back to the
+        idle queue; any conn with a query STILL RUNNING server-side is
+        PQfinished instead (its slot self-heals via the acquire health
+        check). `pool.release_pipeline(pipe^)` — the move makes later use
+        of the pipeline a compile error, same house rule as release(conn^).
+        """
+        var conns = pipe.drain()
+        while len(conns) > 0:
+            var c = conns.pop()
+            self.release(c^)
+
+    def execute_batch(
+        mut self,
+        name: String,
+        jobs: List[List[String]],
+        k: Int = 2,
+        timeout_ms: Int = -1,
+    ) raises -> List[PgResult]:
+        """M prepared queries multiplexed across k conns from one call —
+        results in SUBMISSION order, strict on the first SQL error.
+
+        The whole-overlap one-liner: jobs[i] is the parameter list for the
+        i-th Bind/Execute of prepared statement `name`; the window keeps k
+        sockets busy end-to-end, so aggregate throughput scales toward the
+        server ceiling instead of one-conn RTT. timeout_ms < 0 uses the
+        60 s pipeline default; the budget covers the whole batch. On any
+        failure the pipeline is drained and its wedged conns closed (slots
+        self-heal) before the error re-surfaces generically.
+        """
+        var m = len(jobs)
+        if m == 0:
+            return List[PgResult]()
+        var budget = 60_000
+        if timeout_ms >= 0:
+            budget = timeout_ms
+        var pipe = self.checkout_pipeline(k, timeout_ms)
+        var out = List[PgResult]()
+        var ok = True
+        try:
+            out = pipe.execute_batch(name, jobs, budget)
+        except:
+            ok = False
+        self.release_pipeline(pipe^)
+        if not ok:
+            raise Error(
+                "pqmojo: execute_batch failed mid-batch; the pipeline was"
+                " drained and its wedged conns closed (slots self-heal via"
+                " the pool health check) — collect the exact server message"
+                " by driving StmtPipeline submit/collect directly"
+            )
+        return out^
