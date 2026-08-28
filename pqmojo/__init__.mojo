@@ -83,6 +83,29 @@ Public API:
     row_exists(conn, sql[, params])        any row? strict on SQL errors
     scalar_i64(conn, sql[, params])        Optional[Int64]; None on zero rows
 
+    -- typed rows (declare a struct once; sqlx FromRow pattern) --
+    FromRow / RowColumns                  declaration-site column table: one
+                                           entry per field, by name ("" =
+                                           positional); the shape a codegen
+                                           emits from `# db "col"` tags
+    query_as[T](conn, sql[, params])      TEXT rows -> List[T]; result
+                                           cleared inside
+    query_as_binary[T](conn, sql[, params])  BINARY twin: same struct, same
+                                           values, OID-routed decoders
+    query_one_as[T](conn, sql[, params])  Optional[T]; None on zero rows
+                                           (ErrNoRows semantics)
+    query_one_as_binary[T](conn, sql[, params])  BINARY twin
+    query_prepared_as[T](conn|pool, name, params)  prepared-statement twin
+    map_rows_as[T](res, conn)             List[T] from a caller-held TEXT
+    map_rows_as_binary[T](res, conn)      ... or BINARY PgResult
+    resolve_row_plan[T](res, conn)        RowPlan: indexes resolved ONCE,
+                                           reused across same-shape results
+    map_rows_as_planned[T](res, conn, plan)   planned twins: zero
+    map_rows_as_binary_planned[T](...)        re-resolution hot path
+    Optional[T] fields read NULL -> absent; field types drive the readers:
+    Int64/Int32/Float64/Bool/String, List[Int32]/List[Int64]/List[String],
+    Optional of any of those
+
     -- prepared statements (Parse once, Bind many) --
     conn.prepare(sql) raises -> PgStmt     auto-named per-session statement;
                                            bad SQL raises AT PREPARE time
@@ -163,5 +186,21 @@ from .query import (
     execute_prepared,
     row_exists,
     scalar_i64,
+)
+from .rowmap import (
+    FromRow,
+    RowColumns,
+    RowPlan,
+    RowValue,
+    map_rows_as,
+    map_rows_as_binary,
+    map_rows_as_binary_planned,
+    map_rows_as_planned,
+    query_as,
+    query_as_binary,
+    query_one_as,
+    query_one_as_binary,
+    query_prepared_as,
+    resolve_row_plan,
 )
 from .stmt import PgStmt, execute_prepared_on, prepare_on

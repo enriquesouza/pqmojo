@@ -1,5 +1,51 @@
 # Changelog
 
+## v0.6.0 — 2026-08-27
+
+Typed row mapping: the `db:`-tag half of Rust sqlx's `FromRow`, for Mojo
+1.0's no-proc-macros reality. A row struct declares its column mapping
+ONCE (name -> field, target type incl. `Optional[T]` for nullable) and
+`query_as[T]` builds `List[T]` from any result — the declaration-site
+table is exactly what a codegen emits from `# db "column_name"` trailing
+comments (same grammar mojoserde-gen records).
+
+### Added
+
+* `FromRow` trait + `RowColumns` — the declaration-site table: one entry
+  per field in order; non-empty entries name columns (PQfnumber,
+  case-insensitive, resolved ONCE per result), an empty entry resolves
+  positionally. A missing column raises naming the struct, field, expected
+  column and the result's actual columns.
+* `RowValue` protocol + stdlib conformances — field types drive the
+  readers: Int64/Int32/Float64/Bool/String, List[Int32]/List[Int64]/
+  List[String], Optional of any of those. TEXT mode reuses the col_*
+  scanners (lenient, identical semantics); BINARY mode routes by column
+  type OID — a Float64 field over a numeric column runs the bit-identical
+  numeric rebuild, over float8 the bitcast; OIDs a field type cannot read
+  raise naming the column instead of reinterpreting wire bytes.
+* `query_as[T]` / `query_as_binary[T]` — List[T], result cleared inside.
+* `query_one_as[T]` / `query_one_as_binary[T]` — Optional[T],
+  ErrNoRows semantics (None on empty set, raises on SQL errors).
+* `query_prepared_as[T]` — conn and pool-checkout twins.
+* `map_rows_as[T]` / `map_rows_as_binary[T]` — map a caller-held PgResult
+  (poll_result, pipelines, custom prepared wrappers).
+* `RowPlan` + `resolve_row_plan[T]` + `map_rows_as_planned[T]` /
+  `map_rows_as_binary_planned[T]` — resolve once per STATEMENT, reuse
+  across same-shape results; mismatched results raise.
+* `PgResult.bin_int64_array` int8[] binary reader + the
+  `decode_i8_array` wire decoder beneath it.
+* Bench: query_as vs the api-shaped hand-rolled scan core (both build
+  List[T]) on the 30-col x 20-row real-shape SELECT — +1.6..+3.3% across
+  convert-only and end-to-end, TEXT and BINARY (README table).
+
+### Internal
+
+* `PgSymbols` gained three dlsym-bound accessors (`column_index` =
+  PQfnumber, `column_type` = PQftype, `column_name` = PQfname);
+  construction stays internal to `open_libpq`. No existing export's name
+  or behavior changed; `PgResult`'s shape is untouched.
+
+
 ## v0.5.4 — 2026-08-28
 
 Array binary readers renamed to spell the Mojo element type (public-surface

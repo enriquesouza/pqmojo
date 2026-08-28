@@ -359,6 +359,110 @@ occupy fixed 8 bytes in binary). The win is CPU: the server skips text
 encoding and the client skips parsing. Both convert paths' checksums match
 to the last bit over 600k row-conversions.
 
+## Typed row mapping — query_as/FromRow (the sqlx FromRow pattern)
+
+Declare a row struct ONCE; `query_as[T]` builds `List[T]` from any result.
+No more 30 hand-written `col_*` reads per query — the struct is the whole
+mapping, and the `# db:` tags that annotate it are exactly what a codegen
+script emits (same trailing-comment grammar mojoserde-gen records):
+
+```mojo
+from pqmojo import FromRow, RowColumns, query_as
+
+struct Person(FromRow, Defaultable, Movable):
+    var id: Int64                # db "id"
+    var name: String             # db "name"
+    var nickname: Optional[String]   # db "nickname"     NULL -> absent
+    var score: Optional[Float64]     # db "score"        numeric OR float8
+    var tags: List[Int32]        # db "tags"             int4[]
+    var photos: List[String]     # db "photos"           text[]
+
+    def __init__(out self):
+        self.id = 0
+        self.name = String("")
+        self.nickname = Optional[String]()
+        self.score = Optional[Float64]()
+        self.tags = List[Int32]()
+        self.photos = List[String]()
+
+    @staticmethod
+    def row_columns() raises -> RowColumns:
+        var t = RowColumns()
+        t.add("id")
+        t.add("name")
+        t.add("nickname")
+        t.add("score")
+        t.add("tags")
+        t.add("photos")
+        return t^
+
+var people = query_as[Person](conn, "SELECT * FROM people WHERE tier = $1",
+                             List[String]("A"))
+```
+
+### The contract (what a codegen emits from `# db:` tags)
+
+* fields in declaration order; `row_columns()` entries in the SAME order —
+  one entry per field, the column name from the tag
+* an empty entry (`t.add("")`) resolves POSITIONALLY instead of by name —
+  mixed tables are fine
+* name resolution goes through `PQfnumber` (case-insensitive, SQL folding
+  rules), once per result — never per row; a missing column raises naming
+  the struct, the field, the expected column AND the result's actual
+  columns
+* field types drive the readers:
+
+| field type | TEXT path | BINARY path (OID-routed) |
+|---|---|---|
+| `Int64` / `Int32` | `col_i64` decimal scan | int8/int4/int2 BE decode |
+| `Float64` | `col_f64` (strtod — numeric or float8 text) | float8 bitcast / numeric rebuild (bit-identical) / float4 widen |
+| `Bool` | `'t'/'f'` byte | one wire byte |
+| `String` | `col_text` | raw UTF8 (text/varchar/char/name) |
+| `List[Int32]` / `List[Int64]` / `List[String]` | the text splitters | the array wire decoders |
+| `Optional[X]` | any of the above; SQL NULL -> absent | same |
+
+BINARY mode is strict where TEXT is lenient: a column whose OID the field
+type cannot read raises naming the column and its OID — no silent wire
+reinterpretation.
+
+### The call surface
+
+```mojo
+query_as[T](conn, sql[, params])             -> List[T]     TEXT, result cleared
+query_as_binary[T](conn, sql[, params])      -> List[T]     BINARY twin
+query_one_as[T](conn, sql[, params])         -> Optional[T] ErrNoRows semantics
+query_one_as_binary[T](conn, sql[, params])  -> Optional[T]
+query_prepared_as[T](conn|pool, name, params) -> List[T]    prepared twin
+map_rows_as[T](res, conn) / map_rows_as_binary[T](res, conn)
+                                              caller-held PgResult (poll_result,
+                                              pipelines, custom wrappers)
+```
+
+Hot paths resolve once per STATEMENT, not per result:
+
+```mojo
+var plan = resolve_row_plan[Person](res, conn)      # any result of the SELECT
+var page1 = map_rows_as_planned[Person](res1, conn, plan)
+var page2 = map_rows_as_planned[Person](res2, conn, plan)   # zero re-resolution
+```
+
+### Cost of the abstraction: none
+
+30-column x 20-row real-shape SELECT, typed through a 30-field struct vs
+the hand-rolled scan core (both building `List[WideRow]`), 1000
+iterations, best of 5, M-series local socket:
+
+| measurement | manual | query_as | delta |
+|---|---|---|---|
+| convert-only, TEXT (planned) | 1.31 us/row | 1.34 us/row | +2.6% |
+| convert-only, BINARY (planned) | 2.01 us/row | 2.06 us/row | +2.8% |
+| end-to-end, TEXT | 6.36 us/row | 6.57 us/row | +3.3% |
+| end-to-end, BINARY | 7.23 us/row | 7.40 us/row | +2.3% |
+
+(The `query_as` one-liners add one PQfnumber pass per result — name
+indirection, ~57 ns/column, amortized over every row; the planned form
+skips even that.)
+
 ## What you get from `exec_params` (legacy-compatible)
 
 The v0.1 surface is untouched: `connect`, `exec_params`,
