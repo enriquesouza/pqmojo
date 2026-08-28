@@ -4,8 +4,8 @@ SqlArg lets call sites pass native values straight into execute_args():
 
     var res = execute_args(
         conn,
-        "SELECT id FROM listing_active WHERE filters_array @> $1 AND $2 = ANY(periods)",
-        int_array_literal(filter_ids), window,
+        "SELECT id FROM items WHERE tags @> $1 AND $2 = ANY(tiers)",
+        int_array_literal(tag_ids), tier,
     )
 
 Every argument renders to its Postgres TEXT input form at the API edge
@@ -22,7 +22,7 @@ from .query import PgResult, execute
 
 
 def int_array_literal(vals: List[Int32]) -> String:
-    """'{60,23}' — integer[] input text (the `filters_array @> $4` param)."""
+    """'{60,23}' — integer[] input text (the `tags @> $4` param)."""
     var out = String("{")
     for i in range(len(vals)):
         if i > 0:

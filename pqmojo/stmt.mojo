@@ -4,9 +4,9 @@ connection, Bind/Execute on every hot call.
 The libpq Parse/Bind path:
 
     var stmt = conn.prepare(
-        "SELECT id, title FROM listing_active WHERE id = $1 LIMIT 1"
+        "SELECT id, name FROM items WHERE id = $1 LIMIT 1"
     )
-    var r = stmt.execute([format_i64(listing_id)])   # or stmt.execute_args(...)
+    var r = stmt.execute([format_i64(item_id)])   # or stmt.execute_args(...)
     r is an ordinary status-checked PgResult
     r.clear()
     stmt.deallocate()                                # optional early free
@@ -22,8 +22,8 @@ Type inference notes (honest version):
 
 * prepare passes paramTypes=NULL/nParams=0, so the server infers each
   parameter's type from context EXACTLY as the plain text-protocol queries in
-  pqmojo.query do today — `$1::int4`, `$1 = ANY(periods)`,
-  `filters_array @> $1` all infer as before. BYTE-PARITY-SAFE by
+  pqmojo.query do today — `$1::int4`, `$1 = ANY(tiers)`,
+  `tags @> $1` all infer as before. BYTE-PARITY-SAFE by
   construction: bind identical literal TEXT, get identical parses. The edge
   cases behave identically too: a bare target-list parameter (`SELECT $1`)
   resolves to text just as it does over exec_params, while a genuinely

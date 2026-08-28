@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.5.1 — 2026-08-27
+
+PUBLIC API NAMING scrub (doc/test-only; zero library-code behavior changes,
+no API surface changes — `bin_numeric_to_f64` etc. are already generic).
+
+### Changed
+
+* **Neutral fixture database**: the live suite no longer reads any
+  application schema. Tests run against a dedicated `pqmojo_test` database
+  (unix-socket peer auth) and a suite-owned `pqmojo_test_items` table that
+  `tests/fixture.mojo` CREATEs in setup and DROPs after teardown —
+  `setup_fixture()` / `teardown_fixture()` bracket each affected main().
+* **Column-type coverage preserved exactly**: the fixture table carries
+  int8 / int4 / float8 / numeric (incl NaN, ±Infinity, 1e-130, 1e40,
+  17-significant-digit and 30-digit values) / text / bool / int4[] /
+  text[] / timestamp; the 30-column hot-shape SELECT keeps every column
+  position and type of the old query (id/owner int8, house_number/stars/
+  score int4, lat/lon float8, amount_1..amount_6 numeric::float8, seen_at
+  timestamp, tags int4[], gallery text[]), so binary-vs-text parity, the
+  exhaustive numeric dual-parse, NULL handling and array readers exercise
+  the identical code paths as before.
+* **Docstrings/README/scratch**: SQL examples moved to a neutral
+  `items(id, tags int4[], attrs numeric, name text)` schema; benchmark
+  narratives describe shapes and types, not the originating product.
+
 ## v0.5.0 — 2026-08-27
 
 BINARY result format (fmt=1) for prepared-statement-shaped hot paths: the

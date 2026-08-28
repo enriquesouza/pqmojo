@@ -4,6 +4,7 @@ Run: pixi run mojo run -I . tests/test_core.mojo
 """
 
 from tests.common import DSN, check, check_raised
+from tests.fixture import setup_fixture, teardown_fixture
 
 from pqmojo import (
     connect,
@@ -16,6 +17,7 @@ from pqmojo import (
 
 
 def main() raises:
+    setup_fixture()
     var conn = connect(DSN)
     print("[core] server_version =", conn.parameter_status("server_version"))
     check(conn.parameter_status("server_version").byte_length() > 0,
@@ -75,11 +77,12 @@ def main() raises:
     check(ints[0] == 60 and ints[2] == 22 and len(ints) == 3, "int split")
 
     r = execute(conn,
-                "SELECT filters_array FROM listing_active "
-                + "WHERE filters_array IS NOT NULL ORDER BY id LIMIT 1")
+                "SELECT tags FROM pqmojo_test_items "
+                + "WHERE tags IS NOT NULL ORDER BY id LIMIT 1")
     var ids = split_postgres_int32_array(r.text(0, 0))
-    check(len(ids) > 0, "live array column splits")
+    check(len(ids) > 0, "fixture array column splits")
     r.clear()
 
     conn.close()
+    teardown_fixture()
     print("TEST_CORE PASS")

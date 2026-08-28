@@ -6,6 +6,7 @@ Run: pixi run mojo run -I . tests/test_pool_prepared.mojo
 """
 
 from tests.common import DSN, check, check_raised
+from tests.fixture import setup_fixture, teardown_fixture
 
 from pqmojo import (
     ConnectionPool,
@@ -25,12 +26,13 @@ def build_plan() -> List[Tuple[String, String]]:
     var out = List[Tuple[String, String]]()
     out.append((
         "pq_pool_details",
-        "SELECT id, title, neighborhood FROM listing_active "
+        "SELECT id, title, district FROM pqmojo_test_items "
         + "WHERE id = $1 LIMIT 1",
     ))
     out.append((
         "pq_pool_count",
-        "SELECT count(*)::int8 FROM listing_active WHERE price IS NOT NULL",
+        "SELECT count(*)::int8 FROM pqmojo_test_items "
+        + "WHERE amount IS NOT NULL",
     ))
     return out^
 
@@ -43,10 +45,12 @@ def backend_pid(conn: PgConn) raises -> Int64:
 
 
 def main() raises:
+    setup_fixture()
     var probe_conn = connect(DSN)
     var idr = execute(probe_conn,
-                      "SELECT id FROM listing_active ORDER BY id LIMIT 1", [])
-    var listing_id = idr.col_i64(0, 0)
+                      "SELECT id FROM pqmojo_test_items ORDER BY id LIMIT 1",
+                      [])
+    var item_id = idr.col_i64(0, 0)
     idr.clear()
 
     # ---- rolling plan: warm conns are armed immediately ----
@@ -57,7 +61,7 @@ def main() raises:
     var served = 0
     for i in range(6):
         var c = pool.acquire()
-        var r = execute_prepared(c, "pq_pool_details", [format_i64(listing_id)])
+        var r = execute_prepared(c, "pq_pool_details", [format_i64(item_id)])
         check(r.rows() == 1, "armed details row at checkout " + String(i))
         var rc = execute_prepared(c, "pq_pool_count", [])
         check(rc.rows() == 1 and rc.col_i64(0, 0) >= 0,
@@ -83,7 +87,7 @@ def main() raises:
 
     var survivor = pool.acquire()
     var s_ok = execute_prepared(survivor, "pq_pool_details",
-                                [format_i64(listing_id)])
+                                [format_i64(item_id)])
     check(s_ok.rows() == 1, "post-stale conn still serves prepared plan")
     s_ok.clear()
     pool.release(survivor^)
@@ -111,7 +115,7 @@ def main() raises:
     check(n == 2, "prepare_all covered every idle conn")
     print("[poolprep] prepare_all fanned out across", n, "idle conns")
     var c2 = p2.acquire()
-    var ok2 = execute_prepared(c2, "pq_pool_details", [format_i64(listing_id)])
+    var ok2 = execute_prepared(c2, "pq_pool_details", [format_i64(item_id)])
     check(ok2.rows() == 1, "prepare_all statement binds by name")
     ok2.clear()
     p2.release(c2^)
@@ -119,4 +123,5 @@ def main() raises:
 
     probe_conn.close()
     pool.close()
+    teardown_fixture()
     print("TEST_POOL_PREPARED PASS")

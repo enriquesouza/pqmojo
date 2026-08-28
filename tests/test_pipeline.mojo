@@ -8,6 +8,7 @@ Run: pixi run mojo run -I . tests/test_pipeline.mojo
 from std.time import perf_counter
 
 from tests.common import DSN, check, check_raised
+from tests.fixture import setup_fixture, teardown_fixture
 
 from pqmojo import (
     ConnectionPool,
@@ -22,8 +23,8 @@ from pqmojo import (
 
 
 comptime DETAILS_SQL = (
-    "SELECT id, title, neighborhood, price, latitude, longitude "
-    + "FROM listing_active WHERE id = $1 LIMIT 1"
+    "SELECT id, title, district, amount, latitude, longitude "
+    + "FROM pqmojo_test_items WHERE id = $1 LIMIT 1"
 )
 
 
@@ -43,13 +44,14 @@ def close_all(var conns: List[PgConn]):
 
 
 def main() raises:
+    setup_fixture()
     var c0 = connect(DSN)
     var c1 = connect(DSN)
     c0.prepare_named("ov_details", DETAILS_SQL)
     c1.prepare_named("ov_details", DETAILS_SQL)
 
-    var idr = execute(c0, "SELECT id FROM listing_active ORDER BY id LIMIT 1", [])
-    check(idr.rows() == 1, "listing_active has rows")
+    var idr = execute(c0, "SELECT id FROM pqmojo_test_items ORDER BY id LIMIT 1", [])
+    check(idr.rows() == 1, "fixture table has rows")
     var id_val = idr.col_i64(0, 0)
     idr.clear()
     var p1 = one(format_i64(id_val))
@@ -250,4 +252,5 @@ def main() raises:
     check(best_k2 > best_k1 * 1.25, "k=2 window genuinely overlaps (>=1.25x)")
     bench_pool.close()
 
+    teardown_fixture()
     print("TEST_PIPELINE PASS")

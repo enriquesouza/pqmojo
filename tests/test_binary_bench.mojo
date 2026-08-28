@@ -17,6 +17,7 @@ Run: pixi run test
 from std.time import perf_counter
 
 from tests.common import DSN, check
+from tests.fixture import setup_fixture, teardown_fixture
 
 from pqmojo import (
     PgConn,
@@ -32,20 +33,20 @@ from pqmojo import (
 
 
 comptime NEARBY_SQL = """select
- id, advertiser_id, latitude, longitude, title, NULL::text AS description,
-        street, house_number, complement, NULL::text AS contact_phone, NULL::text AS neighborhood,
-        NULL::text AS city, NULL::text AS state, NULL::text AS zip_code, period, daily_price::float8,
-        weekly_price::float8, monthly_price::float8, yearly_price::float8, hourly_price::float8,
-        period_price::float8, data_anuncio, filters_array, photos_array, review_rate,
-        NULL::text AS source_url, NULL::text AS source, quality_score::int4,
+ id, owner_id, latitude, longitude, title, NULL::text AS note,
+        street, house_number, unit, NULL::text AS phone, NULL::text AS district,
+        NULL::text AS city, NULL::text AS region, NULL::text AS postcode, tier, amount_1::float8,
+        amount_2::float8, amount_3::float8, amount_4::float8, amount_5::float8,
+        amount_6::float8, seen_at, tags, gallery, stars,
+        NULL::text AS source_link, NULL::text AS origin, score::int4,
  null::text as client_info,
  ($1::float8 * 0 + $2::float8 * 0) as distance
 from
- listing_active
+ pqmojo_test_items
 where
  is_active
- and NOT provider_hidden
-order by quality_score DESC NULLS LAST,
+ and NOT hidden
+order by score DESC NULLS LAST,
  id
 limit $3"""
 
@@ -202,9 +203,11 @@ def bench_end_to_end(mut conn: PgConn) raises -> Float64:
 
 
 def main() raises:
+    setup_fixture()
     var conn = connect(DSN)
     var c1 = bench_convert_only(conn)
     var c2 = bench_end_to_end(conn)
     conn.close()
+    teardown_fixture()
     print("checksums (kept alive):", c1, c2)
     print("TEST_BINARY_BENCH PASS")

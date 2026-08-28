@@ -12,8 +12,16 @@ that closes the async-runtime RPS gap) over libpq's C API. libpq is
 `dlopen` (Homebrew, postgresql@16/@17/@14, system paths) and symbols are
 bound with `dlsym`.
 
-Generalized from a production nearby-search hot path serving ~30k `SELECT 1`
-round trips/sec per connection.
+Generalized from a production hot path serving ~30k `SELECT 1` round
+trips/sec per connection.
+
+> **PUBLIC API NAMING — no business terms.** This package is GENERIC. Library
+> repos in this ecosystem (mojoserde, pqmojo, mojoka) must not expose business
+> logic or business names: public identifiers, docstrings, examples and test
+> fixtures describe FORMAT and MECHANISM only (wire types, column TYPES, query
+> shapes), never which product or table they serve. Business names live only in
+> the application repo. Provenance attributions (the `origin:` line at a file
+> top) are the single allowed mention — they are history, not API.
 
 ## Install
 
@@ -34,8 +42,8 @@ def main() raises:
     var conn = pool.acquire()          # blocks up to acquire_timeout_ms
     var r = execute(
         conn,
-        "SELECT id, title, price FROM listing_active \
-         WHERE filters_array @> $1 ORDER BY geom <=> point LIMIT $2",
+        "SELECT id, name, attrs FROM items \
+         WHERE tags @> $1 ORDER BY id LIMIT $2",
         ["{60,7501}", "10"],
     )
     for row in range(r.rows()):
@@ -83,14 +91,13 @@ from pqmojo import execute_args, int_array_literal, letter_array_literal
 
 var res = execute_args(
     conn,
-    "SELECT id FROM listing_active WHERE filters_array @> $1 AND $2 = ANY(periods)",
-    int_array_literal(filter_ids),      # '{60,7501}' int[] input text
+    "SELECT id FROM items WHERE tags @> $1 AND $2 = ANY(tiers)",
+    int_array_literal(tag_ids),         # '{60,7501}' int[] input text
     letter_array_literal([72, 68]),     # '{"H","D"}' quoted text[] input
 )
 ```
 
-Builders ship for `int[]`, `bigint[]`, quoted-escaped `text[]`, and period
-letters; Postgres parses TEXT into whatever column type the statement wants
+Builders ship for `int[]`, `bigint[]`, and quoted-escaped `text[]`; Postgres parses TEXT into whatever column type the statement wants
 (exactly how pgx feeds Go). Raw strings stay welcome — sometimes comptime
 SQL plus a `List[String]` reads best; the builders exist so nobody has to
 hand-write `{"H","D"}` concatenation again.
@@ -111,9 +118,9 @@ time per connection instead of on every request.
 
 ```mojo
 var stmt = conn.prepare(
-    "SELECT id, title FROM listing_active WHERE id = $1 LIMIT 1"
+    "SELECT id, name FROM items WHERE id = $1 LIMIT 1"
 )
-var r = stmt.execute_args(listing_id)   # or stmt.execute(["12345"])
+var r = stmt.execute_args(item_id)      # or stmt.execute(["12345"])
 r.clear()
 stmt.deallocate()                       # optional; sessions free anyway
 ```
@@ -126,7 +133,7 @@ before checkout. Call sites then bind BY NAME on whatever conn they get:
 ```mojo
 pool.prepare_on_acquire([("details", DETAILS_SQL), ("count", COUNT_SQL)])
 ...
-var r = execute_prepared(pool.acquire(), "details", [format_i64(listing_id)])
+var r = execute_prepared(pool.acquire(), "details", [format_i64(item_id)])
 ```
 
 `pool.prepare_all(plan)` is the point-in-time variant: one-shot fan-out
@@ -140,8 +147,8 @@ coverage). The non-blocking twin is `send_prepared(conn, name, params)` +
   (paramFormats=NULL, resultFormat=0) — identical formatting rules to plain
   exec_params. BYTE-PARITY-SAFE by construction: consumers binding the same
   literal text get identical parses; which param types are inferred stays a
-  server-side decision exactly like today (`$1::int4`, `$1 = ANY(periods)`,
-  `filters_array @> $1`). A bare target-list `$1` resolves to text on both
+  server-side decision exactly like today (`$1::int4`, `$1 = ANY(tiers)`,
+  `tags @> $1`). A bare target-list `$1` resolves to text on both
   paths; genuinely unresolvable contexts (`pg_typeof($1)`) now fail loudly
   AT PREPARE instead of on the first hot call.
 * Statements are SESSION-local: `conn.close()` / server termination frees
@@ -249,7 +256,7 @@ pool.prepare_on_acquire([("details", DETAILS_SQL)])
 
 # inside a route handler (the worker's own thread):
 var pipe = pool.checkout_pipeline(2)          # 2 plan-armed conns
-var rid = pipe.submit("details", one(listing_id))
+var rid = pipe.submit("details", one(item_id))
 var more = pipe.submit("details", one(other_id))
 var r0 = pipe.collect()                       # completion order
 var r1 = pipe.collect()
@@ -277,8 +284,8 @@ semantics, type inference and server behavior are byte-identical:
 from pqmojo import execute_binary, split_postgres_text_array
 
 var r = execute_binary(conn,
-    "SELECT id, title, daily_price::float8, filters_array, photos_array \
-     FROM listing_active WHERE id = $1", [format_i64(listing_id)])
+    "SELECT id, name, attrs::float8, tags, gallery \
+     FROM items WHERE id = $1", [format_i64(item_id)])
 r.bin_i64(0, 0)                    # int8, BE bitcast
 r.bin_text(0, 1)                   # raw UTF8, no unescaping
 r.bin_f64(0, 2)                    # IEEE754 bitcast — bit-exact to strtod
@@ -323,15 +330,15 @@ type in SQL (`col::float8`, `col::text`, ...) or read raw bytes via
 `bin_numeric_to_f64` rebuilds the exact decimal string from the base-10000
 digit groups and hands it to the SAME libc strtod the text path uses, so
 the conversion is correctly rounded and cannot drift by an ulp. Verified
-exhaustively against the live fixture DB: every DISTINCT
-daily/weekly/monthly/yearly/hourly/period price (474 numeric values) plus
+exhaustively against the fixture table: every DISTINCT value across the
+six numeric columns (474 live numeric values at verification time) plus
 18 synthetic edge cases (negatives, zero, trailing zeros, 1e-130, 1e40,
 17-significant-digit values, NaN, ±Infinity) dual-parsed through
 text-strtod and the binary reader — ALL bit-identical Float64.
 
-### Measured: recv+convert CPU on the real 30-column nearby SELECT
+### Measured: recv+convert CPU on the real-shape 30-column SELECT
 
-The api's nearby query (30 columns incl. 2 arrays, 20 real rows), 1000
+The 30-column hot query (incl. 2 arrays, 20 fixture rows), 1000
 iterations, M-series local socket, best of 3:
 
 | path | us/row | vs text |
@@ -342,7 +349,7 @@ iterations, M-series local socket, best of 3:
 | end-to-end, binary (`submit_binary` + collect) | **6.89** | **3.18x** |
 
 Honest wire note: for THIS row shape binary is ~13% LARGER on the wire
-(866 B/row vs 764 B/row — `::float8`-cast prices render as short text but
+(866 B/row vs 764 B/row — `::float8`-cast numerics render as short text but
 occupy fixed 8 bytes in binary). The win is CPU: the server skips text
 encoding and the client skips parsing. Both convert paths' checksums match
 to the last bit over 600k row-conversions.
@@ -386,9 +393,9 @@ untouched.
 
 ## Benchmark sanity (M-series local socket, dev DB)
 
-* details-shaped point lookup
-  (`SELECT id, title, neighborhood, price, latitude, longitude FROM
-  listing_active WHERE id = $1 LIMIT 1`), 10k iterations/rep averaged,
+* point-lookup shape
+  (`SELECT id, name, district, attrs, latitude, longitude FROM
+  items WHERE id = $1 LIMIT 1`), 10k iterations/rep averaged,
   best of 3:
   | path | us/op |
   |---|---|

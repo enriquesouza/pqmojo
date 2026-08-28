@@ -17,7 +17,7 @@ from pqmojo import (
 from pqmojo.ffi import c_free, c_string
 
 
-comptime DSN = "postgres://enriquesouza@localhost/alugue_skinny_clean"
+comptime DSN = "postgres:///pqmojo_test"
 
 
 def main() raises:
@@ -27,10 +27,10 @@ def main() raises:
 
     var r = exec_params(
         conn,
-        "SELECT id, title FROM public.listing_active ORDER BY id LIMIT 3",
+        "SELECT id, title FROM pqmojo_test_items ORDER BY id LIMIT 3",
         List[String](),
     )
-    print("listing_active sample:", r.rows(), "rows")
+    print("pqmojo_test_items sample:", r.rows(), "rows")
     for i in range(r.rows()):
         print(" ", r.int64(i, 0), r.text(i, 1))
     r.clear()
@@ -51,14 +51,14 @@ def main() raises:
 
     r = exec_params(
         conn,
-        "SELECT filters_array FROM public.listing_active "
-        + "WHERE filters_array IS NOT NULL ORDER BY id LIMIT 1",
+        "SELECT tags FROM pqmojo_test_items "
+        + "WHERE tags IS NOT NULL ORDER BY id LIMIT 1",
         List[String](),
     )
     var raw = r.text(0, 0)
     var elems = split_postgres_text_array(raw)
     var ids = split_postgres_int32_array(raw)
-    print("filters_array raw:", raw)
+    print("tags raw:", raw)
     print("split text:", elems)
     print("split int32:", ids)
     if len(ids) == 0 or len(ids) != len(elems) or ids[0] != Int32(60):
@@ -110,7 +110,7 @@ def main() raises:
     c_free(sql1)
     var dt2 = Float64(perf_counter() - t2)
 
-    var sock = connect("postgres:///alugue_skinny_clean")
+    var sock = connect("postgres:///pqmojo_test")
     var t3 = perf_counter()
     for _ in range(OPS):
         var p = exec_params(sock, "SELECT 1", List[String]())

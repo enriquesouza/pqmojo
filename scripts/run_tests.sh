@@ -1,7 +1,15 @@
 #!/bin/sh
-# pqmojo live-database test suite. SELECT-only; no business-table writes.
+# pqmojo live-database test suite. The suite owns its data: a dedicated
+# pqmojo_test database plus a pqmojo_test_items fixture table that each
+# affected test CREATEs in setup and DROPs after (tests/fixture.mojo).
+# No application schema is ever read or written.
 set -e
 cd "$(dirname "$0")/.."
+
+# First-run convenience: create the neutral fixture database when missing
+# (peer-auth local socket; every later run is a no-op).
+psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='pqmojo_test'" \
+    | grep -q 1 || psql -d postgres -c "CREATE DATABASE pqmojo_test"
 TMPBIN="${TMPDIR:-/tmp}/pqmojo_test_bin"
 failed=0
 for t in tests/test_*.mojo; do

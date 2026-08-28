@@ -14,6 +14,7 @@ from std.ffi import c_size_t, external_call
 from std.memory import Pointer
 
 from tests.common import DSN, check
+from tests.fixture import setup_fixture, teardown_fixture
 
 from pqmojo import (
     ConnectionPool,
@@ -36,11 +37,11 @@ def build_plan() -> List[Tuple[String, String]]:
     var out = List[Tuple[String, String]]()
     out.append((
         "pq_stress_details",
-        "SELECT id, title FROM listing_active WHERE id = $1 LIMIT 1",
+        "SELECT id, title FROM pqmojo_test_items WHERE id = $1 LIMIT 1",
     ))
     out.append((
         "pq_stress_count",
-        "SELECT count(*)::int8 AS n FROM listing_active WHERE is_active",
+        "SELECT count(*)::int8 AS n FROM pqmojo_test_items WHERE is_active",
     ))
     return out^
 
@@ -74,15 +75,15 @@ def hammer(
     var pool = ConnectionPool(PoolConfig(dsn, max_size=3, min_idle=1))
     pool.prepare_on_acquire(build_plan())
 
-    var listing_id: Int64 = 0
+    var item_id: Int64 = 0
     var boot_ok = True
     var boot = pool.acquire()
     try:
         var idr = execute(boot,
-                          "SELECT id FROM listing_active ORDER BY id LIMIT 1",
+                          "SELECT id FROM pqmojo_test_items ORDER BY id LIMIT 1",
                           [])
-        check(idr.rows() == 1, "worker boot query saw listing_active")
-        listing_id = idr.col_i64(0, 0)
+        check(idr.rows() == 1, "worker boot query saw the fixture table")
+        item_id = idr.col_i64(0, 0)
         idr.clear()
     except:
         boot_ok = False
@@ -95,8 +96,8 @@ def hammer(
             var ok = True
             try:
                 var r = execute_prepared(c, "pq_stress_details",
-                                         [format_i64(listing_id)])
-                if not (r.rows() == 1 and r.col_i64(0, 0) == listing_id):
+                                         [format_i64(item_id)])
+                if not (r.rows() == 1 and r.col_i64(0, 0) == item_id):
                     failures += 1
                 r.clear()
                 var rc = execute_prepared(c, "pq_stress_count", [])
@@ -148,6 +149,7 @@ def run_fleet(
 
 
 def main() raises:
+    setup_fixture()   # BEFORE any fork: workers only query, never create
     var kids = List[Int]()
     var status_addr = _shared_zeroed(4)
     var done_addr = _shared_zeroed(WORKERS * 4)
@@ -176,4 +178,5 @@ def main() raises:
     pre.release(c^)
     pre.close()
 
+    teardown_fixture()
     print("TEST_PREPARED_STRESS PASS")

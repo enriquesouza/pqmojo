@@ -8,6 +8,7 @@ Run: pixi run mojo run -I . tests/test_prepared_bench.mojo
 from std.time import perf_counter
 
 from tests.common import DSN, check
+from tests.fixture import setup_fixture, teardown_fixture
 
 from pqmojo import connect, execute, execute_prepared, format_i64
 
@@ -21,18 +22,20 @@ def now_s() -> Float64:
 
 
 def main() raises:
+    setup_fixture()
     var conn = connect(DSN)
 
     var idr = execute(conn,
-                      "SELECT id FROM listing_active ORDER BY id LIMIT 1", [])
-    check(idr.rows() == 1, "listing_active has rows")
-    var listing_id = idr.col_i64(0, 0)
+                      "SELECT id FROM pqmojo_test_items ORDER BY id LIMIT 1",
+                      [])
+    check(idr.rows() == 1, "fixture table has rows")
+    var item_id = idr.col_i64(0, 0)
     idr.clear()
-    var id_text = format_i64(listing_id)
+    var id_text = format_i64(item_id)
 
     comptime DETAILS_SQL = (
-        "SELECT id, title, neighborhood, price, latitude, longitude "
-        + "FROM listing_active WHERE id = $1 LIMIT 1"
+        "SELECT id, title, district, amount, latitude, longitude "
+        + "FROM pqmojo_test_items WHERE id = $1 LIMIT 1"
     )
     var stmt = conn.prepare(DETAILS_SQL)
     var first = stmt.execute([id_text])

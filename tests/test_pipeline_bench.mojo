@@ -14,6 +14,7 @@ Run: pixi run mojo run -I . tests/test_pipeline_bench.mojo
 from std.time import perf_counter
 
 from tests.common import DSN, check
+from tests.fixture import setup_fixture, teardown_fixture
 
 from pqmojo import ConnectionPool, PoolConfig, execute, execute_prepared, format_i64
 
@@ -22,8 +23,8 @@ comptime ITERS = 8_000
 comptime REPS = 3
 comptime BATCH_JOBS = 64
 comptime DETAILS_SQL = (
-    "SELECT id, title, neighborhood, price, latitude, longitude "
-    + "FROM listing_active WHERE id = $1 LIMIT 1"
+    "SELECT id, title, district, amount, latitude, longitude "
+    + "FROM pqmojo_test_items WHERE id = $1 LIMIT 1"
 )
 
 
@@ -64,12 +65,13 @@ def windowed_qps(
 
 
 def main() raises:
+    setup_fixture()
     var pool = ConnectionPool(
         PoolConfig(DSN, max_size=8, min_idle=2, health_check=False)
     )
     pool.prepare_on_acquire([("ov_details", DETAILS_SQL)])
 
-    var idr = execute(pool.acquire(), "SELECT id FROM listing_active ORDER BY id LIMIT 1", [])
+    var idr = execute(pool.acquire(), "SELECT id FROM pqmojo_test_items ORDER BY id LIMIT 1", [])
     var id_val = idr.col_i64(0, 0)
     idr.clear()
     var params = one(format_i64(id_val))

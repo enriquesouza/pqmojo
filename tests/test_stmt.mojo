@@ -7,6 +7,7 @@ Run: pixi run mojo run -I . tests/test_stmt.mojo
 """
 
 from tests.common import DSN, check, check_raised
+from tests.fixture import setup_fixture, teardown_fixture
 
 from pqmojo import (
     PgStmt,
@@ -21,22 +22,23 @@ from pqmojo import (
 
 
 comptime DETAILS_SQL = (
-    "SELECT id, title, neighborhood FROM listing_active "
+    "SELECT id, title, district FROM pqmojo_test_items "
     + "WHERE id = $1 LIMIT 1"
 )
 
 
 def main() raises:
+    setup_fixture()
     var conn = connect(DSN)
 
-    # resolve a real listing id once (SELECT-only suite contract)
+    # resolve a fixture row id once (the suite owns its data)
     var probe = execute(
         conn,
-        "SELECT id FROM listing_active ORDER BY id LIMIT 1",
+        "SELECT id FROM pqmojo_test_items ORDER BY id LIMIT 1",
         [],
     )
-    check(probe.rows() == 1, "listing_active has rows")
-    var listing_id = probe.col_i64(0, 0)
+    check(probe.rows() == 1, "fixture table has rows")
+    var item_id = probe.col_i64(0, 0)
     probe.clear()
 
     # ---- prepare ONCE, execute N times: identical results every time ----
@@ -44,9 +46,9 @@ def main() raises:
     comptime N = 25
     var first_title = String("")
     for i in range(N):
-        var r = stmt.execute([format_i64(listing_id)])
+        var r = stmt.execute([format_i64(item_id)])
         check(r.rows() == 1 and r.cols() == 3, "details shape at run " + String(i))
-        check(r.col_i64(0, 0) == listing_id, "id round trip")
+        check(r.col_i64(0, 0) == item_id, "id round trip")
         if i == 0:
             first_title = r.col_text(0, 1)
         else:
@@ -57,7 +59,7 @@ def main() raises:
           first_title)
 
     # ---- natively-typed variadic edge ----
-    var ra = stmt.execute_args(listing_id)
+    var ra = stmt.execute_args(item_id)
     check(ra.rows() == 1 and ra.col_text(0, 1) == first_title,
           "execute_args twin output")
     ra.clear()
@@ -73,7 +75,7 @@ def main() raises:
     conn.prepare_named("pq_test_details", DETAILS_SQL)
     for i in range(3):
         var rn = execute_prepared(conn, "pq_test_details",
-                                  [format_i64(listing_id)])
+                                  [format_i64(item_id)])
         check(rn.col_text(0, 1) == first_title, "bind-by-name result " + String(i))
         rn.clear()
 
@@ -142,7 +144,7 @@ def main() raises:
     # wrong param count caught server-side at Bind time
     var count_mismatch = False
     try:
-        var over = stmt.execute([format_i64(listing_id), "extra"])
+        var over = stmt.execute([format_i64(item_id), "extra"])
         over.clear()
     except:
         count_mismatch = True
@@ -163,17 +165,18 @@ def main() raises:
     sane.clear()
 
     # ---- non-blocking twin: send_prepared + poll_result ----
-    send_prepared(conn, stmt.name, [format_i64(listing_id)])
+    send_prepared(conn, stmt.name, [format_i64(item_id)])
     var async_r = poll_result(conn, 5000)
     check(async_r.rows() == 1 and async_r.col_text(0, 1) == first_title,
           "send_prepared/poll_result parity")
     async_r.clear()
 
     var conv_r = execute_prepared_nonblocking(conn, stmt.name,
-                                              [format_i64(listing_id)])
-    check(conv_r.col_i64(0, 0) == listing_id,
+                                              [format_i64(item_id)])
+    check(conv_r.col_i64(0, 0) == item_id,
           "blocking convenience built on async path")
     conv_r.clear()
 
     conn.close()
+    teardown_fixture()
     print("TEST_STMT PASS")

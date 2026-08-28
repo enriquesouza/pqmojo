@@ -29,7 +29,7 @@ test suite):
 Numeric -> Float64 reconstructs the exact decimal string from the base-10000
 groups and runs libc strtod — the same correctly-rounded conversion the text
 path uses, so results are BIT-IDENTICAL to the text path by construction
-(the suite dual-parses every distinct price in the fixture DB to prove it).
+(the suite dual-parses every distinct numeric in the fixture table to prove it).
 
 Decoders are strict: a cell whose byte length does not match its layout
 raises rather than reinterpreting garbage. A NULL cell never reaches a

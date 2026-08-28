@@ -1,10 +1,10 @@
 """BINARY result format (fmt=1): every bin_* reader against hand-crafted
 values, NULL handling, exhaustive numeric bit-exactness (dual-parse text
-strtod vs binary reader over EVERY distinct price in the fixture DB plus
-synthetic edge values), int4[]/text[] with UTF8 and NULL elements vs the
-text-path splitter, pipeline submit_binary, and the api's real 30-column
-nearby SELECT compared column-by-column (binary read vs text read) for 20
-real rows.
+strtod vs binary reader over EVERY distinct numeric value in the fixture
+table plus synthetic edge values), int4[]/text[] with UTF8 and NULL
+elements vs the text-path splitter, pipeline submit_binary, and the
+30-column hot-shape SELECT compared column-by-column (binary read vs text
+read) for 20 fixture rows.
 
 Run: pixi run test
 """
@@ -12,6 +12,7 @@ Run: pixi run test
 from std.memory import bitcast
 
 from tests.common import DSN, check
+from tests.fixture import setup_fixture, teardown_fixture
 
 from pqmojo import (
     PgConn,
@@ -26,20 +27,20 @@ from pqmojo import (
 
 
 comptime NEARBY_SQL = """select
- id, advertiser_id, latitude, longitude, title, NULL::text AS description,
-        street, house_number, complement, NULL::text AS contact_phone, NULL::text AS neighborhood,
-        NULL::text AS city, NULL::text AS state, NULL::text AS zip_code, period, daily_price::float8,
-        weekly_price::float8, monthly_price::float8, yearly_price::float8, hourly_price::float8,
-        period_price::float8, data_anuncio, filters_array, photos_array, review_rate,
-        NULL::text AS source_url, NULL::text AS source, quality_score::int4,
+ id, owner_id, latitude, longitude, title, NULL::text AS note,
+        street, house_number, unit, NULL::text AS phone, NULL::text AS district,
+        NULL::text AS city, NULL::text AS region, NULL::text AS postcode, tier, amount_1::float8,
+        amount_2::float8, amount_3::float8, amount_4::float8, amount_5::float8,
+        amount_6::float8, seen_at, tags, gallery, stars,
+        NULL::text AS source_link, NULL::text AS origin, score::int4,
  null::text as client_info,
  ($1::float8 * 0 + $2::float8 * 0) as distance
 from
- listing_active
+ pqmojo_test_items
 where
  is_active
- and NOT provider_hidden
-order by quality_score DESC NULLS LAST,
+ and NOT hidden
+order by score DESC NULLS LAST,
  id
 limit $3"""
 
@@ -339,35 +340,35 @@ def test_numeric_synthetic(conn: PgConn) raises:
     print("numeric synthetic dual-parse verified:", n, "values")
 
 
-def test_numeric_exhaustive_live(conn: PgConn) raises:
+def test_numeric_exhaustive_fixture(conn: PgConn) raises:
     var sql = """
         SELECT d::text, d FROM (
-            SELECT daily_price AS d FROM listing_active
-            UNION SELECT weekly_price FROM listing_active
-            UNION SELECT monthly_price FROM listing_active
-            UNION SELECT yearly_price FROM listing_active
-            UNION SELECT hourly_price FROM listing_active
-            UNION SELECT period_price FROM listing_active
+            SELECT amount_1 AS d FROM pqmojo_test_items
+            UNION SELECT amount_2 FROM pqmojo_test_items
+            UNION SELECT amount_3 FROM pqmojo_test_items
+            UNION SELECT amount_4 FROM pqmojo_test_items
+            UNION SELECT amount_5 FROM pqmojo_test_items
+            UNION SELECT amount_6 FROM pqmojo_test_items
         ) t WHERE d IS NOT NULL ORDER BY 1
     """
     var rt = execute(conn, sql, [])
     var rb = execute_binary(conn, sql, [])
-    check(rt.rows() == rb.rows(), "numeric live row counts")
+    check(rt.rows() == rb.rows(), "numeric fixture row counts")
     var n = 0
     for row in range(rt.rows()):
-        check(not rb.is_null(row, 1), "live numeric no unexpected null")
+        check(not rb.is_null(row, 1), "fixture numeric no unexpected null")
         var from_text = rt.col_f64(row, 0)
         var from_binary = rb.bin_numeric_to_f64(row, 1)
         check(
             bits_eq(from_text, from_binary),
-            "numeric bit-exactness live row " + String(row)
+            "numeric bit-exactness fixture row " + String(row)
             + " value=" + rt.col_text(row, 0),
         )
         n += 1
     rt.clear()
     rb.clear()
     print(
-        "numeric LIVE dual-parse verified:", n,
+        "numeric FIXTURE dual-parse verified:", n,
         "distinct values, ALL bit-identical to strtod",
     )
 
@@ -457,14 +458,14 @@ def test_nearby_round_trip(conn: PgConn) raises:
         for c in range(15, 21):
             check(
                 bits_eq(rb.bin_f64(row, c), rt.col_f64(row, c)),
-                "nearby price col " + String(c) + " row " + String(row),
+                "nearby amount col " + String(c) + " row " + String(row),
             )
         if not rb.is_null(row, 21):
             var micros = rb.bin_i64(row, 21)
             var from_text = timestamp_text_to_micros(rt.col_text(row, 21))
             check(
                 micros == from_text,
-                "nearby data_anuncio micros row " + String(row) + " text="
+                "nearby seen_at micros row " + String(row) + " text="
                 + rt.col_text(row, 21),
             )
         check(
@@ -502,15 +503,17 @@ def test_nearby_round_trip(conn: PgConn) raises:
 
 
 def main() raises:
+    setup_fixture()
     var conn = connect(DSN)
     test_scalar_bit_patterns(conn)
     test_null_handling(conn)
     test_bin_bytes_view(conn)
     test_arrays_vs_text_path(conn)
     test_numeric_synthetic(conn)
-    test_numeric_exhaustive_live(conn)
+    test_numeric_exhaustive_fixture(conn)
     test_strict_errors(conn)
     test_pipeline_binary(conn)
     test_nearby_round_trip(conn)
     conn.close()
+    teardown_fixture()
     print("TEST_BINARY PASS")

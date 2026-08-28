@@ -5,6 +5,7 @@ Run: pixi run mojo run -I . tests/test_types.mojo
 """
 
 from tests.common import DSN, check
+from tests.fixture import setup_fixture, teardown_fixture
 
 from pqmojo import (
     connect,
@@ -51,6 +52,7 @@ def str_list(vals: List[String]) -> List[String]:
 
 
 def main() raises:
+    setup_fixture()
     var conn = connect(DSN)
 
     # ---- f64 through libc strtod must be bit-exact on nasty inputs ----
@@ -94,16 +96,16 @@ def main() raises:
 
     # ---- scalar_i64 present and absent ----
     var epoch = scalar_i64(
-        conn, "SELECT id FROM client WHERE id = $1",
+        conn, "SELECT id FROM pqmojo_test_items WHERE id = $1",
         [format_i64(1)],
     )
     var have_epoch = True
     if not epoch:
         have_epoch = False
-    check(have_epoch, "client row 1 present")
+    check(have_epoch, "fixture row 1 present")
 
     var missing = scalar_i64(
-        conn, "SELECT id FROM client WHERE id = $1",
+        conn, "SELECT id FROM pqmojo_test_items WHERE id = $1",
         [format_i64(999999999)],
     )
     check(not missing, "zero rows -> None")
@@ -121,7 +123,7 @@ def main() raises:
     check(not row_exists(conn, "SELECT 1 WHERE 1 = 0"), "row_exists empty")
     check(
         row_exists(conn,
-                   "SELECT 1 FROM listing_active WHERE id = $1",
+                   "SELECT 1 FROM pqmojo_test_items WHERE id = $1",
                    [format_i64(1)]),
         "row_exists params",
     )
@@ -196,4 +198,5 @@ def main() raises:
     r.clear()
 
     conn.close()
+    teardown_fixture()
     print("TEST_TYPES PASS")

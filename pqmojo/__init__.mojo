@@ -13,8 +13,8 @@ Quickstart:
     var pool = ConnectionPool(PoolConfig("postgres://user@localhost/app"))
     var conn = pool.acquire()
     var res = execute(conn,
-        "SELECT id, title FROM listing_active WHERE filters_array @> $1 LIMIT $2",
-        List[String](int_array_literal(filter_ids), "10"),
+        "SELECT id, name FROM items WHERE tags @> $1 LIMIT $2",
+        List[String](int_array_literal(tag_ids), "10"),
     )
     for row in range(res.rows()):
         print(res.col_i64(row, 0), res.col_text(row, 1))
@@ -27,12 +27,12 @@ statements directly:
 
     pool.prepare_on_acquire([("details", DETAILS_SQL)])
     var r2 = execute_prepared(pool.acquire(), "details",
-                              List[String](format_i64(listing_id)))
+                              List[String](format_i64(item_id)))
 
 or through a handle:
 
     var stmt = conn.prepare(DETAILS_SQL)
-    var r3 = stmt.execute_args(listing_id)
+    var r3 = stmt.execute_args(item_id)
     stmt.deallocate()                      # optional; sessions free anyway
 
 Blocking one-liners stay the default; overlap-hungry callers use the
