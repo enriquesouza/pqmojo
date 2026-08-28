@@ -49,7 +49,7 @@ in directly); like PgConn it is Movable, never Copyable, and not
 thread-safe — one pipeline per worker thread, built AFTER fork.
 """
 
-from std.ffi import c_size_t, c_ssize_t, external_call
+from std.ffi import c_int, c_size_t, c_ssize_t, external_call
 from std.memory import Pointer
 from std.time import perf_counter
 
@@ -377,7 +377,7 @@ struct StmtPipeline(Movable):
             i16p[unsafe_offset=4 * j + 2] = POLLIN        # .events
             i16p[unsafe_offset=4 * j + 3] = 0             # .revents
         var n = len(active)
-        var rc = external_call["poll", Int32](self.pfds_addr, n, Int32(budget_ms))
+        var rc = external_call["poll", c_int](self.pfds_addr, c_int(n), c_int(budget_ms))
         if rc < 0:
             raise Error("pqmojo: poll(2) failed in pipeline collect")
         if rc == 0:

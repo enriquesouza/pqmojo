@@ -29,7 +29,7 @@ poll_result, cheap and GIL-free). Most call sites should keep plain
 execute()/exec_params().
 """
 
-from std.ffi import c_size_t, c_ssize_t
+from std.ffi import c_int, c_size_t, c_ssize_t
 from std.time import perf_counter
 
 from .binary import FORMAT_BINARY, FORMAT_TEXT
@@ -196,7 +196,7 @@ def _wait_readable(fd: Int32, timeout_ms: Int):
     i16p[unsafe_offset=3] = 0        # .revents (bytes 6..7)
     var remaining = timeout_ms
     while True:
-        var rc = external_call["poll", Int32](Int(pfd), 1, Int32(remaining))
+        var rc = external_call["poll", c_int](pfd, c_int(1), c_int(remaining))
         if rc > 0:
             break
         if rc == 0:
