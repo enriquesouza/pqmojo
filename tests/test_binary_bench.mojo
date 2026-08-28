@@ -97,7 +97,7 @@ def convert_binary(r: PgResult, mut acc: Float64) raises:
             if c == 7 or (c >= 15 and c <= 20) or c == 24 or c == 27:
                 continue
             acc += Float64(r.bin_text(row, c).byte_length())
-        var filters = r.bin_i4_array(row, 22)
+        var filters = r.bin_int32_array(row, 22)
         for i in range(len(filters)):
             acc += Float64(filters[i])
         var photos = r.bin_text_array(row, 23)

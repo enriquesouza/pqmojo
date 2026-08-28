@@ -1,6 +1,32 @@
 # Changelog
 
+## v0.5.4 — 2026-08-28
+
+Array binary readers renamed to spell the Mojo element type (public-surface
+naming wave; zero decoding changes, both old names still callable):
+
+### Added
+
+* `PgResult.bin_int32_array` — canonical name for the int4[] reader
+  (previously only `bin_i4_array`).
+* `PgResult.bin_int64_array` — canonical name for the int8[] reader
+  (previously only `bin_i8_array`); README binary coverage matrix now lists
+  the int8[] row.
+
+### Deprecated
+
+* `PgResult.bin_i4_array` — deprecated alias of `bin_int32_array`.
+* `PgResult.bin_i8_array` — deprecated alias of `bin_int64_array`. Both
+  aliases are kept so mid-wave consumers keep compiling; they delegate
+  one-for-one and will be removed in a future breaking wave.
+
+## v0.5.3 — 2026-08-28 (entry added retroactively at v0.5.4 time)
+
+* `split_postgres_int64_array` — bigint[] text-splitter twin of
+  `split_postgres_int32_array`, exported at package root.
+
 ## v0.5.2 — 2026-08-27
+
 
 PUBLIC API NAMING scrub (doc/test-only; zero library-code behavior changes,
 no API surface changes — `bin_numeric_to_f64` etc. are already generic).

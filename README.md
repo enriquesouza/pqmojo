@@ -289,7 +289,7 @@ var r = execute_binary(conn,
 r.bin_i64(0, 0)                    # int8, BE bitcast
 r.bin_text(0, 1)                   # raw UTF8, no unescaping
 r.bin_f64(0, 2)                    # IEEE754 bitcast — bit-exact to strtod
-r.bin_i4_array(0, 3)               # int4[] decoded
+r.bin_int32_array(0, 3)            # int4[] decoded
 r.bin_text_array(0, 4)             # text[] decoded, UTF8-safe
 r.clear()
 ```
@@ -313,13 +313,18 @@ before.
 | `text`/`varchar`/`bpchar` | `bin_text` | raw UTF8 materialization, no unescaping |
 | any | `bin_bytes` | zero-copy `Span[Byte]` over the wire bytes (valid until `clear()`) |
 | `numeric` | `bin_numeric_to_f64` | base-10000 digit groups -> exact decimal string -> libc strtod |
-| `int4[]` | `bin_i4_array` | 1-D, NULL elements dropped (matches the text splitter) |
+| `int4[]` | `bin_int32_array` | 1-D, NULL elements dropped (matches the text splitter) |
+| `int8[]` | `bin_int64_array` | 1-D, NULL elements dropped (matches the bigint text splitter) |
 | `text[]` | `bin_text_array` | 1-D raw UTF8 elements; commas/quotes/backslashes need no unescaping |
 
 Text-only in fmt=1 (no binary reader shipped): `int2`, `float4`, `oid`,
 `json`/`jsonb`, `uuid`, `bytea`, `date`/`time`/`timestamp`/`timestamptz`
 (timestamp binary is int8 micros since 2000-01-01 — readable via `bin_i64`
 if you want epochs, but no text re-rendering), and everything else exotic.
+
+Array reader names spell the Mojo element type (`bin_int32_array`,
+`bin_int64_array`); the earlier PG-oid spellings `bin_i4_array` and
+`bin_i8_array` remain as deprecated aliases of those two.
 Columns of those types still COME BACK in binary (server encodes per
 column type) — they simply have no typed reader, so cast them to a covered
 type in SQL (`col::float8`, `col::text`, ...) or read raw bytes via

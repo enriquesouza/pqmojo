@@ -220,7 +220,8 @@ def test_null_handling(conn: PgConn) raises:
     check(not r.bin_bool(0, 3), "null bin_bool -> False")
     check(r.bin_text(0, 4) == "", "null bin_text -> empty")
     check(r.bin_numeric_to_f64(0, 5) == 0.0, "null bin_numeric -> 0")
-    check(len(r.bin_i4_array(0, 6)) == 0, "null bin_i4_array -> empty")
+    check(len(r.bin_int32_array(0, 6)) == 0, "null bin_int32_array -> empty")
+    check(len(r.bin_i4_array(0, 6)) == 0, "null bin_i4_array alias -> empty")
     check(len(r.bin_text_array(0, 7)) == 0, "null bin_text_array -> empty")
     check(len(r.bin_bytes(0, 0)) == 0, "null bin_bytes -> empty span")
     for c in range(8):
@@ -251,20 +252,24 @@ def test_arrays_vs_text_path(conn: PgConn) raises:
                ARRAY['x',NULL,'z']::text[], ARRAY[]::text[]
     """, [])
     check(
+        arrays_equal_i32(r.bin_int32_array(0, 0), i32_list([1, 2, 3])),
+        "bin_int32_array basic",
+    )
+    check(
         arrays_equal_i32(r.bin_i4_array(0, 0), i32_list([1, 2, 3])),
-        "bin_i4_array basic",
+        "bin_i4_array deprecated alias basic",
     )
     check(
         arrays_equal_i32(
-            r.bin_i4_array(0, 1), i32_list([-1, 2, -3])
+            r.bin_int32_array(0, 1), i32_list([-1, 2, -3])
         ),
-        "bin_i4_array negatives",
+        "bin_int32_array negatives",
     )
     check(
-        arrays_equal_i32(r.bin_i4_array(0, 2), i32_list([1, 3])),
-        "bin_i4_array NULL element dropped",
+        arrays_equal_i32(r.bin_int32_array(0, 2), i32_list([1, 3])),
+        "bin_int32_array NULL element dropped",
     )
-    check(len(r.bin_i4_array(0, 3)) == 0, "bin_i4_array empty")
+    check(len(r.bin_int32_array(0, 3)) == 0, "bin_int32_array empty")
     check(
         arrays_equal_text(
             r.bin_text_array(0, 4), str_list(["a", "bé"])
@@ -297,7 +302,7 @@ def test_arrays_vs_text_path(conn: PgConn) raises:
         var text_ok: Bool
         if c < 4:
             text_ok = arrays_equal_i32(
-                r.bin_i4_array(0, c),
+                r.bin_int32_array(0, c),
                 split_postgres_int32_array(rt.col_text(0, c)),
             )
         else:
@@ -470,7 +475,7 @@ def test_nearby_round_trip(conn: PgConn) raises:
             )
         check(
             arrays_equal_i32(
-                rb.bin_i4_array(row, 22),
+                rb.bin_int32_array(row, 22),
                 split_postgres_int32_array(rt.col_text(row, 22)),
             ),
             "nearby filters_array row " + String(row),
@@ -502,6 +507,27 @@ def test_nearby_round_trip(conn: PgConn) raises:
     )
 
 
+def test_int64_array_vs_text_path(conn: PgConn) raises:
+    var r = execute_binary(conn, """
+        SELECT ARRAY[1::bigint,2,NULL,9223372036854775807],
+               ARRAY[-9223372036854775808, 0]
+    """, [])
+    check(
+        len(r.bin_int64_array(0, 0)) == 3
+        and r.bin_int64_array(0, 0)[0] == 1
+        and r.bin_int64_array(0, 0)[1] == 2
+        and r.bin_int64_array(0, 0)[2] == 9223372036854775807,
+        "bin_int64_array NULL element dropped + int8 max",
+    )
+    check(
+        len(r.bin_i8_array(0, 1)) == 2
+        and r.bin_i8_array(0, 1)[0] == -9223372036854775808
+        and r.bin_i8_array(0, 1)[1] == 0,
+        "bin_i8_array deprecated alias int8 min",
+    )
+    r.clear()
+
+
 def main() raises:
     setup_fixture()
     var conn = connect(DSN)
@@ -509,6 +535,7 @@ def main() raises:
     test_null_handling(conn)
     test_bin_bytes_view(conn)
     test_arrays_vs_text_path(conn)
+    test_int64_array_vs_text_path(conn)
     test_numeric_synthetic(conn)
     test_numeric_exhaustive_fixture(conn)
     test_strict_errors(conn)

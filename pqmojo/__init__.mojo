@@ -116,7 +116,7 @@ Public API:
     PgResult.bin_bytes                     zero-copy Span over wire bytes
     PgResult.bin_numeric_to_f64            numeric -> Float64, bit-identical
                                            to the text path's strtod
-    PgResult.bin_i4_array/bin_text_array   1-D arrays, NULL elements dropped
+    PgResult.bin_int32_array/bin_int64_array/bin_text_array  1-D arrays, NULL elements dropped
     split_postgres_text_array              "{\\"a\\",b}" -> ["a", "b"]
     split_postgres_int32_array             "{23,60}" -> [23, 60]
     split_postgres_int64_array             "{23,60}" -> [23, 60] (bigint)

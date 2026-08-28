@@ -253,7 +253,7 @@ struct PgResult(Movable):
             self._bin_addr(row, col), self._bin_len(row, col)
         )
 
-    def bin_i4_array(self, row: Int, col: Int) raises -> List[Int32]:
+    def bin_int32_array(self, row: Int, col: Int) raises -> List[Int32]:
         """int4[] cell from a BINARY result (1-D); NULL -> empty list.
 
         NULL elements are dropped, matching split_postgres_int32_array on
@@ -262,7 +262,7 @@ struct PgResult(Movable):
             return List[Int32]()
         return decode_i4_array(self._bin_addr(row, col), self._bin_len(row, col))
 
-    def bin_i8_array(self, row: Int, col: Int) raises -> List[Int64]:
+    def bin_int64_array(self, row: Int, col: Int) raises -> List[Int64]:
         """int8[] cell from a BINARY result (1-D); NULL -> empty list.
 
         NULL elements are dropped, matching split_postgres_int64_array on
@@ -270,6 +270,15 @@ struct PgResult(Movable):
         if self.is_null(row, col):
             return List[Int64]()
         return decode_i8_array(self._bin_addr(row, col), self._bin_len(row, col))
+
+    def bin_i4_array(self, row: Int, col: Int) raises -> List[Int32]:
+        """Deprecated alias of bin_int32_array; the canonical name spells
+        the Mojo element type (Int32), not the PG oid (int4)."""
+        return self.bin_int32_array(row, col)
+
+    def bin_i8_array(self, row: Int, col: Int) raises -> List[Int64]:
+        """Deprecated alias of bin_int64_array (int8 -> Int64)."""
+        return self.bin_int64_array(row, col)
 
     def bin_text_array(self, row: Int, col: Int) raises -> List[String]:
         """text[] cell from a BINARY result (1-D); NULL -> empty list.
