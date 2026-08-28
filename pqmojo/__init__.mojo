@@ -144,6 +144,26 @@ Public API:
     split_postgres_int32_array             "{23,60}" -> [23, 60]
     split_postgres_int64_array             "{23,60}" -> [23, 60] (bigint)
 
+    -- timestamps (PG TEXT decode/render, pqmojo.timestamp) --
+    parse_postgres_timestamp_bytes_to_microseconds(ptr, n) -> Int64
+                                           "YYYY-MM-DD HH:MM:SS[.ffffff]
+                                           [(+|-)HH[:MM]]" -> micros (UTC,
+                                           offset applied); strict trim
+                                           (" "/tab); 0 on malformed
+    parse_postgres_timestamp_bytes_lenient(ptr, n) -> Int64
+                                           same grammar, trim set adds
+                                           newline + carriage return
+    render_postgres_timestamp_text(micros) -> String
+                                           "YYYY-MM-DD HH:MM:SS" (secs
+                                           resolution, zero-padded)
+    parse_instant(raw) -> InstantParse     human-input validation:
+                                           DD/MM/YYYY HH:MM (16 chars),
+                                           YYYY-MM-DD[T| ]HH:MM[:SS], "Z"
+                                           tolerated, ranges enforced
+    unix_seconds_now() -> Int64            libc time(2), Unix epoch secs
+    days_since_epoch_for_date / civil_from_days / is_leap /
+    day_count_in_month                     Hinnant calendar primitives
+
     -- param building --
     format_i64/format_f64                  scalars (f64 = shortest round trip)
     int_array_literal/i64_array_literal    '{60,23}' style int[] input text
@@ -204,3 +224,15 @@ from .rowmap import (
     resolve_row_plan,
 )
 from .stmt import PgStmt, execute_prepared_on, prepare_on
+from .timestamp import (
+    InstantParse,
+    civil_from_days,
+    day_count_in_month,
+    days_since_epoch_for_date,
+    is_leap,
+    parse_instant,
+    parse_postgres_timestamp_bytes_lenient,
+    parse_postgres_timestamp_bytes_to_microseconds,
+    render_postgres_timestamp_text,
+    unix_seconds_now,
+)

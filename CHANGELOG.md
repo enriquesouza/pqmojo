@@ -1,5 +1,67 @@
 # Changelog
 
+## v0.7.0 — 2026-08-28
+
+PG TEXT timestamp decode/render moves into the library: the frozen
+verbatim port of the origin application's time module, with the single
+`origin: alugue-mojo-api extensions/time.mojo` attribution line at file
+top (the ecosystem's one-allowed-mention convention). Pure text/format
+mechanics — no DB, no I/O, DB-free tests.
+
+### Added
+
+* `pqmojo.timestamp` module, exported at package root:
+  - `parse_postgres_timestamp_bytes_to_microseconds(ptr, n) -> Int64` —
+    strict PG TEXT decode "YYYY-MM-DD HH:MM:SS[.ffffff][(+|-)HH[:MM]]"
+    straight off libpq's text buffer (byte pointer + length, no
+    intermediate String) into UTC micros; the offset is APPLIED, not
+    preserved; trims ONLY " " and "\\t"; 0 on malformed. Frozen quirks
+    pinned by tests: digit fields never range-checked, separators never
+    validated, bytes after the offset ignored.
+  - `parse_postgres_timestamp_bytes_lenient(ptr, n) -> Int64` — identical
+    grammar; the trim set extends to " ", "\\t", "\\n", "\\r" at both
+    ends (the only behavioral difference).
+  - `render_postgres_timestamp_text(micros) -> String` — the inverse for
+    offset-free UTC micros, "YYYY-MM-DD HH:MM:SS": fractional micros
+    truncated, negative micros floor to the prior day, the year NOT
+    zero-padded below 1000 (frozen String(Int) behavior).
+  - `parse_instant(raw) -> InstantParse` — human-input validation:
+    "DD/MM/YYYY HH:MM" (exactly 16 chars, day-first), "YYYY-MM-DD
+    [T| ]HH:MM[:SS]", trailing "Z" tolerated, ranges enforced (month
+    1-12, day 1-31, hour 0-23, minute/second 0-59); returns ok flag +
+    micros + civil fields.
+  - `unix_seconds_now() -> Int64` — the libc time(2) wrapper.
+  - Calendar primitives `days_since_epoch_for_date` / `civil_from_days`
+    / `is_leap` / `day_count_in_month` (Howard Hinnant).
+* `tests/test_timestamp.mojo` — DB-free, 99 checks: round-trips
+  (offset-free text, +00, +05:30, -08), fractional padding (".5" ->
+  500000) and the 6-digit cap, strict-vs-lenient trim difference,
+  malformed->0 matrix, parse_instant accept/reject matrix, leap years
+  (1900/2000/2024), a calendar round-trip sweep over all 1,460,970 CE
+  dates 1..4000, and the calendar-twin verdict sweep below.
+
+### Calendar-twin verdict — both era spellings stay
+
+The strict parser routes through the public `days_since_epoch_for_date`,
+the lenient parser through the private co-ported era spelling
+`_days_from_civil_alt` — exactly as the origin file ships them. A dense
+sweep (years -4000..4000 x 12 months x 31 days, 2,976,372 comparisons,
+pinned in the suite) proves the two spellings return IDENTICAL days for
+every adjusted year >= 0, and at negative adjusted years diverge ONLY
+where yy % 400 == 0 (public spelling one day lower; 3,720 cases) or
+yy % 400 == 399 (private spelling one day lower; 3,782 cases) — 7,502
+one-day mismatches total, the only in-format one being year 0000
+Jan/Feb. Divergence proven, so the twin is kept, not collapsed.
+
+### Renamed vs the origin application
+
+No business terms on the library surface. Renames: the nearby-variant
+parser -> `parse_postgres_timestamp_bytes_lenient` (its real property is
+the lenient trim set), `seconds_since_epoch_now` -> `unix_seconds_now`,
+`render_microseconds_as_timestamp_text` -> `render_postgres_timestamp_text`,
+private `_days_from_civil_nearby` -> `_days_from_civil_alt`. Application
+consumers re-point in their own wave.
+
 ## v0.6.0 — 2026-08-27
 
 Typed row mapping: the `db:`-tag half of Rust sqlx's `FromRow`, for Mojo

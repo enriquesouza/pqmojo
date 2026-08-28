@@ -5,7 +5,7 @@ preview = ["pixi-build"]
 description = "libpq for Mojo — zero Python, runtime dlopen, text protocol"
 name = "pqmojo"
 platforms = ["osx-arm64"]
-version = "0.6.0"
+version = "0.7.0"
 license = "MIT"
 license-file = "LICENSE"
 readme = "README.md"
@@ -21,7 +21,7 @@ mojo = "=1.0.0"
 
 [package]
 name = "pqmojo"
-version = "0.6.0"
+version = "0.7.0"
 
 [package.build]
 backend = { name = "pixi-build-mojo", version = "0.*" }
