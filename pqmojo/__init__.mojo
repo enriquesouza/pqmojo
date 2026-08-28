@@ -77,6 +77,9 @@ Public API:
     execute(conn, sql[, params])           STRICT: raises carrying server error text
     execute_args(conn, sql, *args)         SqlArg variadic: ints/floats/bools/strings
                                            and array literals bind inline
+    exec_params_binary(conn, sql, params)  BINARY (fmt=1) results; params still TEXT
+    execute_binary(conn, sql, params)      strict BINARY execution (conn twin:
+                                           conn.execute_binary(sql, params))
     row_exists(conn, sql[, params])        any row? strict on SQL errors
     scalar_i64(conn, sql[, params])        Optional[Int64]; None on zero rows
 
@@ -93,6 +96,8 @@ Public API:
     -- async-friendly (one conn = one in-flight query) --
     send_query(conn, sql, params)          submit without waiting
     poll_result(conn, timeout_ms)          poll(2)-driven completion wait
+    send_prepared_binary(conn, name, params)   non-blocking BINARY submit
+                                           (pipe.submit_binary rides this)
 
     -- results (zero-copy unless noted) --
     PgResult.clear()                       explicit PQclear, destructor-free
@@ -105,6 +110,13 @@ Public API:
     PgResult.col_f64 / col_nullable_f64    libc strtod, zero-copy, ulp-exact
     PgResult.col_bool / col_nullable_bool  't'/'f' single byte read
     PgResult.text/text_or_null/int32/int64/float64   legacy aliases
+    PgResult.bin_i64/bin_i32/bin_f64/bin_bool   BINARY (fmt=1) cells, BE
+                                           bitcast; NULL -> zero value
+    PgResult.bin_text                      raw UTF8 materialization
+    PgResult.bin_bytes                     zero-copy Span over wire bytes
+    PgResult.bin_numeric_to_f64            numeric -> Float64, bit-identical
+                                           to the text path's strtod
+    PgResult.bin_i4_array/bin_text_array   1-D arrays, NULL elements dropped
     split_postgres_text_array              "{\\"a\\",b}" -> ["a", "b"]
     split_postgres_int32_array             "{23,60}" -> [23, 60]
 
@@ -124,6 +136,7 @@ from .asyncq import (
     execute_prepared_nonblocking,
     poll_result,
     send_prepared,
+    send_prepared_binary,
     send_query,
 )
 from .conn import PgConn, close_conn, connect
@@ -143,7 +156,9 @@ from .pool import ConnectionPool, PoolConfig, PoolStats, gss_safe_dsn
 from .query import (
     PgResult,
     exec_params,
+    exec_params_binary,
     execute,
+    execute_binary,
     execute_prepared,
     row_exists,
     scalar_i64,

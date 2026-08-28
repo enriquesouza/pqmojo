@@ -1,5 +1,66 @@
 # Changelog
 
+## v0.5.0 — 2026-08-27
+
+BINARY result format (fmt=1) for prepared-statement-shaped hot paths: the
+server stops encoding text and the client stops parsing it. On the api's
+real 30-column nearby SELECT (20 rows), client convert CPU drops **7.21 ->
+1.31 us/row (5.51x)** and full end-to-end (prepared exec + convert + clear)
+drops **21.90 -> 6.89 us/row (3.18x)** — the miss-path CPU lever.
+
+### Added
+
+* **Binary execution** — same TEXT params on the way in, only the
+  resultFormat flag flips (zero breakage: every existing export, function
+  and byte behavior untouched):
+  `conn.execute_binary(sql, params)` /
+  `execute_binary(conn, sql, params)` (strict),
+  `exec_params_binary` (lenient), `pipe.submit_binary(name, params)` on the
+  pipeline window, `send_prepared_binary(conn, name, params)` +
+  `poll_result` for the non-blocking pair.
+* **Typed binary readers on PgResult** (new `pqmojo.binary` decoding core):
+  `bin_i64` / `bin_i32` (BE two's-complement bitcast), `bin_f64` (8-byte BE
+  IEEE754 bitcast — bit-identical to the text path's strtod), `bin_bool`,
+  `bin_text` (raw UTF8, no unescaping), `bin_bytes` (zero-copy Span over
+  the wire bytes), `bin_numeric_to_f64` (base-10000 groups -> exact decimal
+  string -> libc strtod), `bin_i4_array` / `bin_text_array` (1-D, NULL
+  elements dropped, UTF8-safe length-prefixed elements). NULLs short-circuit
+  to the same zero values the text readers use. Decoders are strict: a
+  length that contradicts the layout raises instead of reinterpreting
+  garbage.
+* **numeric bit-exactness, proven exhaustively**: every DISTINCT
+  daily/weekly/monthly/yearly/hourly/period price in the live fixture DB
+  (474 numeric values) plus 18 synthetic edge values (negatives, zero,
+  trailing zeros, 1e-130/-0.001/1e40, 17-significant-digit values, NaN,
+  ±Infinity) dual-parsed text-strtod vs binary reader — ALL bit-identical
+  Float64.
+* **Wire verification**: numeric wire layout (ndigits:int16, weight:int16,
+  sign:uint16 — 0x0000/0x4000/0xC000/0xD000/0xF000 — dscale:uint16,
+  base-10000 int16 digit groups) and array layout (ndim/flags/elemtype/
+  [nelems/lbound], length-prefixed elements) confirmed byte-for-byte against
+  the server before implementation.
+* **Round-trip parity**: the api's real 30-column nearby SELECT compared
+  column-by-column (binary readers vs text readers) for 20 real rows — 600
+  cells, including the int8/int4/float8/text/NULL columns, filters_array
+  (int4[]) and photos_array (text[]) vs the text splitters, and data_anuncio
+  timestamps read as int8 micros matched against the ISO text rendering.
+* **`tests/test_binary.mojo`** (bit patterns, NULL handling per reader,
+  bin_bytes UTF8 view, arrays vs text splitters, synthetic + exhaustive
+  live numeric dual-parse, strict-error contracts, pipeline submit_binary,
+  30-col round trip), **`tests/test_binary_bench.mojo`** (convert-only and
+  end-to-end text-vs-binary tables, checksum-guarded). Suite: 14/14 green.
+* Bench honesty note: for the nearby row shape BINARY is ~13% LARGER on the
+  wire (866 vs 764 B/row — short numeric text vs fixed-width float8); the
+  win is CPU, not bytes.
+
+### Coverage (fmt=1 readers)
+
+int8, int4, float8, bool, text/varchar/bpchar, numeric, int4[], text[],
+plus type-agnostic raw `bin_bytes`. Still text-only (no binary reader):
+int2, float4, oid, json/jsonb, uuid, bytea, date/time/timestamp/timestamptz
+(timestamp binary = int8 micros since 2000-01-01, readable via `bin_i64`),
+and other exotic types — cast those columns in SQL or read raw bytes.
+
 ## v0.4.0 — 2026-08-27
 
 OVERLAP: K connections multiplexed through ONE thread — the capability that

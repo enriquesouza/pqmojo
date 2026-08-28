@@ -48,6 +48,7 @@ comptime _FnNtuples = def(Int) thin abi("C") -> Int32
 comptime _FnNfields = def(Int) thin abi("C") -> Int32
 comptime _FnGetvalue = def(Int, Int32, Int32) thin abi("C") -> Int
 comptime _FnGetisnull = def(Int, Int32, Int32) thin abi("C") -> Int32
+comptime _FnGetlength = def(Int, Int32, Int32) thin abi("C") -> Int32
 comptime _FnClear = def(Int) thin abi("C") -> NoneType
 comptime _FnFinish = def(Int) thin abi("C") -> NoneType
 comptime _FnParameterStatus = def(Int, CharPtr) thin abi("C") -> Int
@@ -77,6 +78,7 @@ comptime _PQntuples = ExternalFunction["PQntuples", _FnNtuples]
 comptime _PQnfields = ExternalFunction["PQnfields", _FnNfields]
 comptime _PQgetvalue = ExternalFunction["PQgetvalue", _FnGetvalue]
 comptime _PQgetisnull = ExternalFunction["PQgetisnull", _FnGetisnull]
+comptime _PQgetlength = ExternalFunction["PQgetlength", _FnGetlength]
 comptime _PQclear = ExternalFunction["PQclear", _FnClear]
 comptime _PQfinish = ExternalFunction["PQfinish", _FnFinish]
 comptime _PQparameterStatus = ExternalFunction[
@@ -120,6 +122,7 @@ struct PgSymbols(Copyable, Movable):
     var nfields: _PQnfields.type
     var getvalue: _PQgetvalue.type
     var getisnull: _PQgetisnull.type
+    var getlength: _FnGetlength
     var clear: _PQclear.type
     var finish: _PQfinish.type
     var parameter_status: _PQparameterStatus.type
@@ -145,6 +148,7 @@ struct PgSymbols(Copyable, Movable):
         nfields: _PQnfields.type,
         getvalue: _PQgetvalue.type,
         getisnull: _PQgetisnull.type,
+        getlength: _FnGetlength,
         clear: _PQclear.type,
         finish: _PQfinish.type,
         parameter_status: _PQparameterStatus.type,
@@ -168,6 +172,7 @@ struct PgSymbols(Copyable, Movable):
         self.nfields = nfields
         self.getvalue = getvalue
         self.getisnull = getisnull
+        self.getlength = getlength
         self.clear = clear
         self.finish = finish
         self.parameter_status = parameter_status
@@ -247,6 +252,7 @@ def open_libpq() raises -> PgSymbols:
         nfields=_PQnfields.load(dlh),
         getvalue=_PQgetvalue.load(dlh),
         getisnull=_PQgetisnull.load(dlh),
+        getlength=_PQgetlength.load(dlh),
         clear=_PQclear.load(dlh),
         finish=_PQfinish.load(dlh),
         parameter_status=_PQparameterStatus.load(dlh),

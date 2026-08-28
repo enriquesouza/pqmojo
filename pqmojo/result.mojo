@@ -8,8 +8,20 @@ libpq's buffer — zero-copy and ulp-exact).
 from std.collections.span import Span
 from std.ffi import external_call
 
+from .binary import (
+    decode_bool,
+    decode_bytes,
+    decode_f64,
+    decode_i32,
+    decode_i64,
+    decode_i4_array,
+    decode_numeric_to_f64,
+    decode_text,
+    decode_text_array,
+)
 from .ffi import (
     CharPtr,
+    _FnGetlength,
     PGRES_COMMAND_OK,
     PGRES_EMPTY_QUERY,
     PGRES_TUPLES_OK,
@@ -36,6 +48,7 @@ struct PgResult(Movable):
     var nfields: _PQnfields.type
     var getvalue: _PQgetvalue.type
     var getisnull: _PQgetisnull.type
+    var getlength: _FnGetlength
     var clear_fn: _PQclear.type
     var status_fn: _FnResultStatus
     var errmsg_fn: _FnResultErrorMessage
@@ -47,6 +60,7 @@ struct PgResult(Movable):
         nfields: _PQnfields.type,
         getvalue: _PQgetvalue.type,
         getisnull: _PQgetisnull.type,
+        getlength: _FnGetlength,
         clear_fn: _PQclear.type,
         status_fn: _FnResultStatus,
         errmsg_fn: _FnResultErrorMessage,
@@ -56,6 +70,7 @@ struct PgResult(Movable):
         self.nfields = nfields
         self.getvalue = getvalue
         self.getisnull = getisnull
+        self.getlength = getlength
         self.clear_fn = clear_fn
         self.status_fn = status_fn
         self.errmsg_fn = errmsg_fn
@@ -168,6 +183,95 @@ struct PgResult(Movable):
         if self.is_null(row, col):
             return Optional[Bool]()
         return Optional[Bool](self.col_bool(row, col))
+
+    def _bin_addr(self, row: Int, col: Int) -> Int:
+        return self.getvalue(self.handle, Int32(row), Int32(col))
+
+    def _bin_len(self, row: Int, col: Int) -> Int32:
+        return self.getlength(self.handle, Int32(row), Int32(col))
+
+    def bin_i64(self, row: Int, col: Int) raises -> Int64:
+        """int8 cell from a BINARY (fmt=1) result; NULL -> 0 (pair with
+        is_null). 8-byte big-endian bitcast — no parse."""
+        if self.is_null(row, col):
+            return 0
+        return decode_i64(self._bin_addr(row, col), self._bin_len(row, col))
+
+    def bin_i32(self, row: Int, col: Int) raises -> Int32:
+        """int4 cell from a BINARY result; NULL -> 0. 4-byte BE bitcast."""
+        if self.is_null(row, col):
+            return 0
+        return decode_i32(self._bin_addr(row, col), self._bin_len(row, col))
+
+    def bin_f64(self, row: Int, col: Int) raises -> Float64:
+        """float8 cell from a BINARY result; NULL -> 0.0.
+
+        8-byte big-endian IEEE754 bitcast — bit-identical to the text
+        path's strtod by construction, at a fraction of the CPU."""
+        if self.is_null(row, col):
+            return 0.0
+        return decode_f64(self._bin_addr(row, col), self._bin_len(row, col))
+
+    def bin_bool(self, row: Int, col: Int) raises -> Bool:
+        """bool cell from a BINARY result; NULL -> False. One wire byte."""
+        if self.is_null(row, col):
+            return False
+        return decode_bool(self._bin_addr(row, col), self._bin_len(row, col))
+
+    def bin_text(self, row: Int, col: Int) -> String:
+        """text/varchar cell from a BINARY result as a String copy.
+
+        Binary-format text arrives as raw UTF8 — no escaping to undo.
+        NULL -> "" (pair with is_null), matching col_text."""
+        if self.is_null(row, col):
+            return String("")
+        return decode_text(self._bin_addr(row, col), self._bin_len(row, col))
+
+    def bin_bytes(self, row: Int, col: Int) -> Span[Byte, MutAnyOrigin]:
+        """Zero-copy Span view over a BINARY cell's raw wire bytes.
+
+        The span borrows libpq's buffer: valid until clear(). NULL -> an
+        empty span (pair with is_null to tell an empty value apart)."""
+        if self.is_null(row, col):
+            return Span[Byte, MutAnyOrigin](
+                unsafe_ptr=CharPtr(
+                    unsafe_from_address=self._bin_addr(row, col)
+                ),
+                length=0,
+            )
+        return decode_bytes(self._bin_addr(row, col), self._bin_len(row, col))
+
+    def bin_numeric_to_f64(self, row: Int, col: Int) raises -> Float64:
+        """numeric cell from a BINARY result -> Float64, BIT-IDENTICAL to
+        the text path's strtod (base-10000 groups rebuild the exact decimal
+        string; strtod does the same correctly-rounded conversion the text
+        path feeds on). NULL -> 0.0."""
+        if self.is_null(row, col):
+            return 0.0
+        return decode_numeric_to_f64(
+            self._bin_addr(row, col), self._bin_len(row, col)
+        )
+
+    def bin_i4_array(self, row: Int, col: Int) raises -> List[Int32]:
+        """int4[] cell from a BINARY result (1-D); NULL -> empty list.
+
+        NULL elements are dropped, matching split_postgres_int32_array on
+        the text path."""
+        if self.is_null(row, col):
+            return List[Int32]()
+        return decode_i4_array(self._bin_addr(row, col), self._bin_len(row, col))
+
+    def bin_text_array(self, row: Int, col: Int) raises -> List[String]:
+        """text[] cell from a BINARY result (1-D); NULL -> empty list.
+
+        Length-prefixed raw UTF8 elements: commas, quotes and escapes need
+        no unescaping. NULL elements are dropped, matching
+        split_postgres_text_array on the text path."""
+        if self.is_null(row, col):
+            return List[String]()
+        return decode_text_array(
+            self._bin_addr(row, col), self._bin_len(row, col)
+        )
 
     def text(self, row: Int, col: Int) -> String:
         """Copy cell text; NULL cells scan as "" (use is_null to tell apart).

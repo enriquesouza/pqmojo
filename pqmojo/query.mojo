@@ -12,6 +12,7 @@ from std.ffi import c_size_t, c_ssize_t, external_call
 from std.memory import Pointer
 
 from .args import format_f64, format_i64
+from .binary import exec_binary_on
 from .conn import PgConn
 from .ffi import CharPtr, PgSymbols, c_free, c_string, text_of
 from .result import PgResult
@@ -41,6 +42,7 @@ def _wrap(addr: Int, syms: PgSymbols) -> PgResult:
         syms.nfields,
         syms.getvalue,
         syms.getisnull,
+        syms.getlength,
         syms.clear,
         syms.result_status,
         syms.result_error_message,
@@ -115,6 +117,32 @@ def execute(conn: PgConn, sql: String) raises -> PgResult:
 def execute(conn: PgConn, sql: String, params: List[String]) raises -> PgResult:
     """execute with TEXT params; raises on SQL errors."""
     var res = exec_params(conn, sql, params)
+    res.check_ok()
+    return res^
+
+
+def exec_params_binary(
+    conn: PgConn, sql: String, params: List[String]
+) raises -> PgResult:
+    """Run one parameterized statement with results in BINARY format.
+
+    Params ride TEXT exactly like exec_params; only resultFormat flips to
+    1. Raises carrying PQerrorMessage when libpq returns no result. The
+    returned PgResult owns its handle — clear() it explicitly, and read it
+    with the bin_* accessors (col_* text scanners are meaningless on
+    binary cells).
+    """
+    var addr = exec_binary_on(conn.handle, conn.syms, sql, params)
+    return _wrap(addr, conn.syms)
+
+
+def execute_binary(
+    conn: PgConn, sql: String, params: List[String]
+) raises -> PgResult:
+    """execute_binary: strict BINARY-format execution; raises on SQL errors.
+
+    Module-level twin of conn.execute_binary."""
+    var res = exec_params_binary(conn, sql, params)
     res.check_ok()
     return res^
 

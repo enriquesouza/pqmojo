@@ -53,7 +53,7 @@ from std.ffi import c_size_t, c_ssize_t, external_call
 from std.memory import Pointer
 from std.time import perf_counter
 
-from .asyncq import send_prepared
+from .asyncq import send_prepared, send_prepared_binary
 from .conn import PgConn
 from .ffi import (
     CharPtr,
@@ -82,6 +82,7 @@ def _wrap_on(addr: Int, syms: PgSymbols) -> PgResult:
         syms.nfields,
         syms.getvalue,
         syms.getisnull,
+        syms.getlength,
         syms.clear,
         syms.result_status,
         syms.result_error_message,
@@ -208,6 +209,28 @@ struct StmtPipeline(Movable):
             )
         var rid = self.next_id
         send_prepared(self.conns[slot], name, params)
+        self.next_id += 1
+        self.outstanding += 1
+        self.pending[slot].append(rid)
+        self.cursor = (slot + 1) % self.k
+        return rid
+
+    def submit_binary(mut self, name: String, params: List[String]) raises -> Int:
+        """submit() with results requested in Postgres BINARY format.
+
+        Params ride TEXT identically (paramFormats untouched); only the
+        resultFormat flag flips to 1, so the returned PgResult must be read
+        through the bin_* accessors. Same window contract, request ids,
+        collect() path and strict error behavior as submit().
+        """
+        var slot = self._free_slot()
+        if slot == -1:
+            raise Error(
+                "pqmojo: pipeline window full ("
+                + String(self.k) + " in flight) — collect() first"
+            )
+        var rid = self.next_id
+        send_prepared_binary(self.conns[slot], name, params)
         self.next_id += 1
         self.outstanding += 1
         self.pending[slot].append(rid)

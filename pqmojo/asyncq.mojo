@@ -32,6 +32,7 @@ execute()/exec_params().
 from std.ffi import c_size_t, c_ssize_t
 from std.time import perf_counter
 
+from .binary import FORMAT_BINARY, FORMAT_TEXT
 from .conn import PgConn
 from .ffi import CharPtr, c_free, c_string, external_call, text_of
 from .query import PgResult
@@ -102,7 +103,7 @@ def send_prepared(mut conn: PgConn, name: String, params: List[String]) raises:
     if n == 0:
         var rc = conn.syms.send_query_prepared(
             conn.handle, name_buf, Int32(0), Int(0),
-            Int(0), Int(0), Int32(0)
+            Int(0), Int(0), FORMAT_TEXT
         )
         c_free(name_buf)
         if rc == 0:
@@ -120,7 +121,52 @@ def send_prepared(mut conn: PgConn, name: String, params: List[String]) raises:
 
     var rc2 = conn.syms.send_query_prepared(
         conn.handle, name_buf, Int32(n), addr_arr,
-        Int(0), Int(0), Int32(0)
+        Int(0), Int(0), FORMAT_TEXT
+    )
+    for i in range(len(bufs)):
+        c_free(bufs[i])
+    _ = external_call["free", c_ssize_t](CharPtr(unsafe_from_address=addr_arr))
+    c_free(name_buf)
+    if rc2 == 0:
+        raise Error("pqmojo: PQsendQueryPrepared failed: "
+                    + text_of(conn.syms.error_message(conn.handle)))
+
+
+def send_prepared_binary(mut conn: PgConn, name: String, params: List[String]) raises:
+    """Submit a PREPARED statement (Bind/Execute by name) requesting BINARY
+    results; complete with the ordinary poll_result.
+
+    send_prepared with only the resultFormat flag flipped to 1: params ride
+    TEXT identically, one-in-flight-per-conn and stale-drain contracts are
+    unchanged. Poll the completion with poll_result and read it through the
+    bin_* accessors.
+    """
+    _drain_completed(conn)
+    var name_buf = c_string(name)
+    var n = len(params)
+
+    if n == 0:
+        var rc = conn.syms.send_query_prepared(
+            conn.handle, name_buf, Int32(0), Int(0),
+            Int(0), Int(0), FORMAT_BINARY
+        )
+        c_free(name_buf)
+        if rc == 0:
+            raise Error("pqmojo: PQsendQueryPrepared failed: "
+                        + text_of(conn.syms.error_message(conn.handle)))
+        return
+
+    var addr_arr = Int(external_call["malloc", CharPtr](c_size_t(n * 8)))
+    var slots = Pointer[Int64, MutAnyOrigin](unsafe_from_address=addr_arr)
+    var bufs = List[CharPtr]()
+    for i in range(n):
+        var b = c_string(params[i])
+        bufs.append(b)
+        slots[unsafe_offset=i] = Int64(Int(b))
+
+    var rc2 = conn.syms.send_query_prepared(
+        conn.handle, name_buf, Int32(n), addr_arr,
+        Int(0), Int(0), FORMAT_BINARY
     )
     for i in range(len(bufs)):
         c_free(bufs[i])
@@ -226,6 +272,7 @@ def _wrap(addr: Int, conn: PgConn) -> PgResult:
         conn.syms.nfields,
         conn.syms.getvalue,
         conn.syms.getisnull,
+        conn.syms.getlength,
         conn.syms.clear,
         conn.syms.result_status,
         conn.syms.result_error_message,

@@ -103,6 +103,7 @@ def _wrap(addr: Int, syms: PgSymbols) -> PgResult:
         syms.nfields,
         syms.getvalue,
         syms.getisnull,
+        syms.getlength,
         syms.clear,
         syms.result_status,
         syms.result_error_message,

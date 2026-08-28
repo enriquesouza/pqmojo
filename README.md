@@ -1,15 +1,16 @@
 # pqmojo
 
-**libpq for Mojo — zero Python, runtime dlopen, text protocol.**
+**libpq for Mojo — zero Python, runtime dlopen, text params, BINARY results.**
 
 The tokio-postgres/deadpool-postgres analog for Mojo 1.0: connection
 pooling, parameterized queries, **server-side prepared statements**, typed
-row scanning, a non-blocking execution path, and **single-thread OVERLAP**
+row scanning, **BINARY result decoding**, a non-blocking execution path, and
+**single-thread OVERLAP**
 (K connections multiplexed through one poll(2) window — the v0.4.0 piece
 that closes the async-runtime RPS gap) over libpq's C API. libpq is
 **never linked at build time** — the dylib is probed at runtime via
 `dlopen` (Homebrew, postgresql@16/@17/@14, system paths) and symbols are
-bound with `dlsym`; everything crosses the boundary as the TEXT protocol.
+bound with `dlsym`.
 
 Generalized from a production nearby-search hot path serving ~30k `SELECT 1`
 round trips/sec per connection.
@@ -262,6 +263,90 @@ aggregate for one extra socket); k=4 approaches the local loopback
 ceiling (~110k qps here). The window covers exactly the DB leg — for
 compute-between-queries on a single conn, use `send_query`/`poll_result`.
 
+## BINARY results — fmt=1 typed readers (v0.5.0)
+
+TEXT results make the server render every cell to text so the client can
+parse it back — per column, per row, per request. Postgres can instead ship
+the raw wire bytes (`resultFormat=1`): integers arrive as big-endian
+two's complement, float8 as big-endian IEEE754 (a bitcast, not a parse),
+text as raw UTF8 with no escaping, arrays length-prefixed. `execute_binary`
+flips exactly that one flag — every param still rides TEXT, so binding
+semantics, type inference and server behavior are byte-identical:
+
+```mojo
+from pqmojo import execute_binary, split_postgres_text_array
+
+var r = execute_binary(conn,
+    "SELECT id, title, daily_price::float8, filters_array, photos_array \
+     FROM listing_active WHERE id = $1", [format_i64(listing_id)])
+r.bin_i64(0, 0)                    # int8, BE bitcast
+r.bin_text(0, 1)                   # raw UTF8, no unescaping
+r.bin_f64(0, 2)                    # IEEE754 bitcast — bit-exact to strtod
+r.bin_i4_array(0, 3)               # int4[] decoded
+r.bin_text_array(0, 4)             # text[] decoded, UTF8-safe
+r.clear()
+```
+
+Entry points: `conn.execute_binary(sql, params)` /
+`execute_binary(conn, sql, params)` (strict), `exec_params_binary`
+(lenient), `pipe.submit_binary(name, params)` on the pipeline window, and
+`send_prepared_binary(conn, name, params)` + `poll_result` — all reading
+back through the `bin_*` accessors on `PgResult`. NULLs short-circuit to
+the same zero values the text readers use; pair with `is_null` exactly as
+before.
+
+### Binary coverage matrix (fmt=1)
+
+| PG type | reader | decoding |
+|---|---|---|
+| `int8` | `bin_i64` | 8-byte BE bitcast, no parse |
+| `int4` | `bin_i32` | 4-byte BE bitcast |
+| `float8` | `bin_f64` | 8-byte BE IEEE754 bitcast — bit-identical to the text path's strtod |
+| `bool` | `bin_bool` | one wire byte |
+| `text`/`varchar`/`bpchar` | `bin_text` | raw UTF8 materialization, no unescaping |
+| any | `bin_bytes` | zero-copy `Span[Byte]` over the wire bytes (valid until `clear()`) |
+| `numeric` | `bin_numeric_to_f64` | base-10000 digit groups -> exact decimal string -> libc strtod |
+| `int4[]` | `bin_i4_array` | 1-D, NULL elements dropped (matches the text splitter) |
+| `text[]` | `bin_text_array` | 1-D raw UTF8 elements; commas/quotes/backslashes need no unescaping |
+
+Text-only in fmt=1 (no binary reader shipped): `int2`, `float4`, `oid`,
+`json`/`jsonb`, `uuid`, `bytea`, `date`/`time`/`timestamp`/`timestamptz`
+(timestamp binary is int8 micros since 2000-01-01 — readable via `bin_i64`
+if you want epochs, but no text re-rendering), and everything else exotic.
+Columns of those types still COME BACK in binary (server encodes per
+column type) — they simply have no typed reader, so cast them to a covered
+type in SQL (`col::float8`, `col::text`, ...) or read raw bytes via
+`bin_bytes`.
+
+### numeric parity — the load-bearing claim
+
+`bin_numeric_to_f64` rebuilds the exact decimal string from the base-10000
+digit groups and hands it to the SAME libc strtod the text path uses, so
+the conversion is correctly rounded and cannot drift by an ulp. Verified
+exhaustively against the live fixture DB: every DISTINCT
+daily/weekly/monthly/yearly/hourly/period price (474 numeric values) plus
+18 synthetic edge cases (negatives, zero, trailing zeros, 1e-130, 1e40,
+17-significant-digit values, NaN, ±Infinity) dual-parsed through
+text-strtod and the binary reader — ALL bit-identical Float64.
+
+### Measured: recv+convert CPU on the real 30-column nearby SELECT
+
+The api's nearby query (30 columns incl. 2 arrays, 20 real rows), 1000
+iterations, M-series local socket, best of 3:
+
+| path | us/row | vs text |
+|---|---|---|
+| convert-only, text readers (`col_*` + splitters) | 7.21 | 1.00x |
+| convert-only, binary readers (`bin_*`) | **1.31** | **5.51x** |
+| end-to-end (prepared exec + convert + clear), text | 21.90 | 1.00x |
+| end-to-end, binary (`submit_binary` + collect) | **6.89** | **3.18x** |
+
+Honest wire note: for THIS row shape binary is ~13% LARGER on the wire
+(866 B/row vs 764 B/row — `::float8`-cast prices render as short text but
+occupy fixed 8 bytes in binary). The win is CPU: the server skips text
+encoding and the client skips parsing. Both convert paths' checksums match
+to the last bit over 600k row-conversions.
+
 ## What you get from `exec_params` (legacy-compatible)
 
 The v0.1 surface is untouched: `connect`, `exec_params`,
@@ -320,13 +405,17 @@ untouched.
   libpq's internal buffers — allocation happens only at API edges like
   `col_text`
 
-## Why TEXT protocol
+## Why TEXT protocol (params) — and BINARY (results)
 
-Every parameter binds as TEXT and every result is scanned from PG text with
-libc `strtod` for floats (byte-exact vs Go's `strconv.ParseFloat`, fixing
-the ulp drift of v0.1's hand-rolled scanner) and hand-rolled integer
-scanning. Postgres parses `$N` into whatever column type the statement
-wants; the client stays allocation-light.
+Every parameter binds as TEXT on BOTH execution paths — Postgres parses
+`$N` into whatever column type the statement wants and the client never
+formats anything but flat strings. Results ship as PG text by default,
+scanned with libc `strtod` for floats (byte-exact vs Go's
+`strconv.ParseFloat`, fixing the ulp drift of v0.1's hand-rolled scanner)
+and hand-rolled integer scanning; hot call sites that measure their
+conversion bill switch to `execute_binary`/`submit_binary` for zero-parse
+typed cells (see the BINARY section). The client stays allocation-light
+either way.
 
 ## License
 

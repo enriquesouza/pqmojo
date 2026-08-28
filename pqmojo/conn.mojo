@@ -11,7 +11,9 @@
 """
 
 from .args import format_i64
+from .binary import exec_binary_on
 from .ffi import CONNECTION_OK, CharPtr, PgSymbols, c_free, c_string, open_libpq, text_of
+from .result import PgResult
 from .stmt import AUTO_PREFIX, PgStmt, prepare_on
 
 
@@ -80,6 +82,33 @@ struct PgConn(Movable):
         execute_prepared(conn, name, params).
         """
         prepare_on(self.handle, self.syms, name, sql)
+
+    def execute_binary(mut self, sql: String, params: List[String]) raises -> PgResult:
+        """One blocking round trip with results in Postgres BINARY format.
+
+        Identical to execute() on the way in — every param rides TEXT,
+        paramTypes stay NULL so the server infers exactly as before — only
+        the resultFormat flag flips to 1: int8/int4 arrive as big-endian
+        raw bytes, float8 as IEEE754 bitcast, text as raw UTF8, arrays
+        length-prefixed. Read the result with the bin_* accessors; the
+        col_* text scanners are meaningless on binary cells. Strict: raises
+        carrying the server message on SQL errors. Pair with is_null for
+        NULL cells, exactly like the text readers.
+        """
+        var addr = exec_binary_on(self.handle, self.syms, sql, params)
+        var r = PgResult(
+            addr,
+            self.syms.ntuples,
+            self.syms.nfields,
+            self.syms.getvalue,
+            self.syms.getisnull,
+            self.syms.getlength,
+            self.syms.clear,
+            self.syms.result_status,
+            self.syms.result_error_message,
+        )
+        r.check_ok()
+        return r^
 
 
 def connect(conninfo: String) raises -> PgConn:
