@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.5.1 — 2026-08-27
+## v0.5.2 — 2026-08-27
 
 PUBLIC API NAMING scrub (doc/test-only; zero library-code behavior changes,
 no API surface changes — `bin_numeric_to_f64` etc. are already generic).
