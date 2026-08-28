@@ -34,7 +34,15 @@ from std.time import perf_counter
 
 from .binary import FORMAT_BINARY, FORMAT_TEXT
 from .conn import PgConn
-from .ffi import CharPtr, c_free, c_string, external_call, text_of
+from .ffi import (
+    CharPtr,
+    PGRES_COMMAND_OK,
+    c_free,
+    c_string,
+    external_call,
+    text_of,
+)
+from .pipeline import _wrap_on
 from .query import PgResult
 
 
@@ -287,3 +295,52 @@ def execute_nonblocking(
     code path)."""
     send_query(conn, sql, params)
     return poll_result(conn, 600_000)
+
+
+def prepare_named_batch(
+    mut conn: PgConn, plan: List[Tuple[String, String]]
+) raises:
+    """DEALLOCATE ALL + PREPARE every (name, sql) pair in ONE round trip.
+
+    One simple-protocol multi-statement string: the whole plan reaches the
+    server in a single send, so a 20-statement plan costs one wait instead
+    of twenty. Statement names and SQL come from the application's plan
+    table (already validated by the pool), never from request input. The
+    results are drained to completion; a non-COMMAND_OK status raises with
+    the server message."""
+    var sql = String("DEALLOCATE ALL")
+    for pair in plan:
+        sql += ";PREPARE "
+        sql += pair[0]
+        sql += " AS "
+        sql += pair[1]
+    var sql_buf = c_string(sql)
+    var rc = conn.syms.send_query(conn.handle, sql_buf)
+    c_free(sql_buf)
+    if rc == 0:
+        raise Error(
+            "pqmojo: pipelined PREPARE submit failed: "
+            + text_of(conn.syms.error_message(conn.handle))
+        )
+    var expect = len(plan) + 1
+    var seen = 0
+    while True:
+        var addr = conn.syms.get_result(conn.handle)
+        if addr == 0:
+            break
+        var result = _wrap_on(addr, conn.syms)
+        var failed = result.status() != PGRES_COMMAND_OK
+        var message = String("")
+        if failed:
+            message = text_of(conn.syms.error_message(conn.handle))
+        result.clear()
+        if failed:
+            raise Error("pqmojo: pipelined PREPARE batch failed: " + message)
+        seen += 1
+    if seen != expect:
+        raise Error(
+            "pqmojo: pipelined PREPARE batch got "
+            + String(seen)
+            + " results, expected "
+            + String(expect)
+        )

@@ -63,6 +63,10 @@ comptime _FnExecPrepared = def(
 comptime _FnSendQueryPrepared = def(
     Int, CharPtr, Int32, Int, Int, Int, Int32
 ) thin abi("C") -> Int32
+
+comptime _FnSendPrepare = def(
+    Int, CharPtr, CharPtr, Int32, Int
+) thin abi("C") -> Int32
 comptime _FnGetResult = def(Int) thin abi("C") -> Int
 comptime _FnConsumeInput = def(Int) thin abi("C") -> Int32
 comptime _FnIsBusy = def(Int) thin abi("C") -> Int32
@@ -97,6 +101,9 @@ comptime _PQexecPrepared = ExternalFunction[
 ]
 comptime _PQsendQueryPrepared = ExternalFunction[
     "PQsendQueryPrepared", _FnSendQueryPrepared
+]
+comptime _PQSendPrepare = ExternalFunction[
+    "PQsendPrepare", _FnSendPrepare
 ]
 comptime _PQgetResult = ExternalFunction["PQgetResult", _FnGetResult]
 comptime _PQconsumeInput = ExternalFunction["PQconsumeInput", _FnConsumeInput]
@@ -137,6 +144,7 @@ struct PgSymbols(Copyable, Movable):
     var prepare_fn: _FnPrepare
     var exec_prepared: _FnExecPrepared
     var send_query_prepared: _FnSendQueryPrepared
+    var send_prepare: _FnSendPrepare
     var get_result: _FnGetResult
     var consume_input: _FnConsumeInput
     var is_busy: _FnIsBusy
@@ -166,6 +174,7 @@ struct PgSymbols(Copyable, Movable):
         prepare_fn: _FnPrepare,
         exec_prepared: _FnExecPrepared,
         send_query_prepared: _FnSendQueryPrepared,
+        send_prepare: _FnSendPrepare,
         get_result: _FnGetResult,
         consume_input: _FnConsumeInput,
         is_busy: _FnIsBusy,
@@ -193,6 +202,7 @@ struct PgSymbols(Copyable, Movable):
         self.prepare_fn = prepare_fn
         self.exec_prepared = exec_prepared
         self.send_query_prepared = send_query_prepared
+        self.send_prepare = send_prepare
         self.get_result = get_result
         self.consume_input = consume_input
         self.is_busy = is_busy
@@ -276,6 +286,7 @@ def open_libpq() raises -> PgSymbols:
         prepare_fn=_PQprepare.load(dlh),
         exec_prepared=_PQexecPrepared.load(dlh),
         send_query_prepared=_PQsendQueryPrepared.load(dlh),
+        send_prepare=_PQSendPrepare.load(dlh),
         get_result=_PQgetResult.load(dlh),
         consume_input=_PQconsumeInput.load(dlh),
         is_busy=_PQisBusy.load(dlh),

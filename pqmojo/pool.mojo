@@ -45,6 +45,7 @@ from .conn import PgConn, connect
 from .ffi import CharPtr
 from .pipeline import MAX_PIPELINE_SLOTS, StmtPipeline
 from .query import PgResult, execute
+from .asyncq import prepare_named_batch
 from .stmt import prepare_on, prepare_or_replace_on
 
 
@@ -356,15 +357,13 @@ struct ConnectionPool(Movable):
         var want = len(self.idle)
         while seen < want:
             var c = self.idle.pop()
-            for t in stored:
-                var ok = True
-                try:
-                    prepare_or_replace_on(c.handle, c.syms, t[0], t[1])
-                except:
-                    ok = False
-                if not ok:
-                    armed = False
-                    break
+            var ok = True
+            try:
+                prepare_named_batch(c, stored)
+            except:
+                ok = False
+            if not ok:
+                armed = False
             if armed:
                 c.prepared_epoch = bumped
             self.idle.append(c^)
@@ -398,8 +397,7 @@ re-PREPARE). Zero idle conns returns 0
         var want = len(self.idle)
         while seen < want:
             var c = self.idle.pop()
-            for t in stored:
-                prepare_or_replace_on(c.handle, c.syms, t[0], t[1])
+            prepare_named_batch(c, stored)
             self.idle.append(c^)
             seen += 1
         _unlock(self.lock_addr)
@@ -426,8 +424,7 @@ re-PREPARE). Zero idle conns returns 0
 
         if not need:
             return
-        for t in copied:
-            prepare_or_replace_on(c.handle, c.syms, t[0], t[1])
+        prepare_named_batch(c, copied)
         c.prepared_epoch = epoch_target
 
     def acquire(mut self, timeout_ms: Int = -1) raises -> PgConn:
