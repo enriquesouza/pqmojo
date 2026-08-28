@@ -15,6 +15,7 @@ from .binary import (
     decode_i32,
     decode_i64,
     decode_i4_array,
+    decode_i8_array,
     decode_numeric_to_f64,
     decode_text,
     decode_text_array,
@@ -260,6 +261,15 @@ struct PgResult(Movable):
         if self.is_null(row, col):
             return List[Int32]()
         return decode_i4_array(self._bin_addr(row, col), self._bin_len(row, col))
+
+    def bin_i8_array(self, row: Int, col: Int) raises -> List[Int64]:
+        """int8[] cell from a BINARY result (1-D); NULL -> empty list.
+
+        NULL elements are dropped, matching split_postgres_int64_array on
+        the text path."""
+        if self.is_null(row, col):
+            return List[Int64]()
+        return decode_i8_array(self._bin_addr(row, col), self._bin_len(row, col))
 
     def bin_text_array(self, row: Int, col: Int) raises -> List[String]:
         """text[] cell from a BINARY result (1-D); NULL -> empty list.

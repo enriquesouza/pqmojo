@@ -119,6 +119,7 @@ Public API:
     PgResult.bin_i4_array/bin_text_array   1-D arrays, NULL elements dropped
     split_postgres_text_array              "{\\"a\\",b}" -> ["a", "b"]
     split_postgres_int32_array             "{23,60}" -> [23, 60]
+    split_postgres_int64_array             "{23,60}" -> [23, 60] (bigint)
 
     -- param building --
     format_i64/format_f64                  scalars (f64 = shortest round trip)
@@ -150,7 +151,7 @@ from .params import (
     scalar_i64_args,
     text_array_literal,
 )
-from .pgarray import split_postgres_int32_array, split_postgres_text_array
+from .pgarray import split_postgres_int32_array, split_postgres_int64_array, split_postgres_text_array
 from .pipeline import PipelineResult, StmtPipeline
 from .pool import ConnectionPool, PoolConfig, PoolStats, gss_safe_dsn
 from .query import (

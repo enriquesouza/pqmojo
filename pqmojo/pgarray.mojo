@@ -92,3 +92,37 @@ def _parse_span_int64(b: Span[Byte, _]) -> Int64:
         v = v * 10 + Int64(b[i] - 48)
         i += 1
     return -v if neg else v
+
+
+def split_postgres_int64_array(text: String) -> List[Int64]:
+    """Split a PG bigint-array literal into Int64 elements, order preserved.
+
+    Elements that do not start with a digit or sign are skipped (matches the
+    int32 splitter's NULL/empty handling). A NULL column never reaches here
+    -- check PgResult.is_null first.
+    """
+    var out = List[Int64]()
+    var elems = split_postgres_text_array(text)
+    for i in range(len(elems)):
+        var sb = elems[i].as_bytes()
+        if len(sb) == 0:
+            continue
+        var first = sb[0]
+        if (first < 48 or first > 57) and first != 45 and first != 43:
+            continue
+        var value: Int64 = 0
+        var negative = False
+        var index = 0
+        if sb[0] == 45:
+            negative = True
+            index = 1
+        elif sb[0] == 43:
+            index = 1
+        while index < len(sb):
+            var digit = sb[index]
+            if digit < 48 or digit > 57:
+                break
+            value = value * 10 + Int64(digit - 48)
+            index += 1
+        out.append(-value if negative else value)
+    return out^

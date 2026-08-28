@@ -19,6 +19,7 @@ from pqmojo import (
     row_exists_args,
     scalar_i64,
     scalar_i64_args,
+    split_postgres_int64_array,
     text_array_literal,
 )
 
@@ -52,6 +53,7 @@ def str_list(vals: List[String]) -> List[String]:
 
 
 def main() raises:
+    _test_i64_array_split()
     setup_fixture()
     var conn = connect(DSN)
 
@@ -200,3 +202,33 @@ def main() raises:
     conn.close()
     teardown_fixture()
     print("TEST_TYPES PASS")
+
+
+def _test_i64_array_split() raises:
+    var cases = List[String]()
+    cases.append("{1,2,3}")
+    cases.append("{}")
+    cases.append("{-5,10,9999999999}")
+    cases.append("{+7}")
+    cases.append("{1,NULL,3}")
+    cases.append("{,}")
+    for i in range(len(cases)):
+        var out = split_postgres_int64_array(cases[i])
+        if cases[i] == "{1,2,3}":
+            if len(out) != 3 or out[0] != 1 or out[2] != 3:
+                raise Error("i64 split basic failed")
+        elif cases[i] == "{}":
+            if len(out) != 0:
+                raise Error("i64 empty failed")
+        elif cases[i] == "{-5,10,9999999999}":
+            if len(out) != 3 or out[0] != -5 or out[2] != 9999999999:
+                raise Error("i64 negative/big failed")
+        elif cases[i] == "{+7}":
+            if len(out) != 1 or out[0] != 7:
+                raise Error("i64 plus-sign failed")
+        elif cases[i] == "{1,NULL,3}":
+            if len(out) != 2 or out[0] != 1 or out[1] != 3:
+                raise Error("i64 null-skip failed")
+    print("PASS i64 array split")
+
+

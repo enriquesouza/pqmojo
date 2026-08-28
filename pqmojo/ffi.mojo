@@ -69,6 +69,9 @@ comptime _FnIsBusy = def(Int) thin abi("C") -> Int32
 comptime _FnSocket = def(Int) thin abi("C") -> Int32
 comptime _FnResultStatus = def(Int) thin abi("C") -> Int32
 comptime _FnResultErrorMessage = def(Int) thin abi("C") -> Int
+comptime _FnFnumber = def(Int, CharPtr) thin abi("C") -> Int32
+comptime _FnFtype = def(Int, Int32) thin abi("C") -> Int32
+comptime _FnFname = def(Int, Int32) thin abi("C") -> Int
 
 comptime _PQconnectdb = ExternalFunction["PQconnectdb", _FnConnectdb]
 comptime _PQstatus = ExternalFunction["PQstatus", _FnStatus]
@@ -103,6 +106,9 @@ comptime _PQresultStatus = ExternalFunction["PQresultStatus", _FnResultStatus]
 comptime _PQresultErrorMessage = ExternalFunction[
     "PQresultErrorMessage", _FnResultErrorMessage
 ]
+comptime _PQfnumber = ExternalFunction["PQfnumber", _FnFnumber]
+comptime _PQftype = ExternalFunction["PQftype", _FnFtype]
+comptime _PQfname = ExternalFunction["PQfname", _FnFname]
 
 
 struct PgSymbols(Copyable, Movable):
@@ -137,6 +143,9 @@ struct PgSymbols(Copyable, Movable):
     var socket_fn: _FnSocket
     var result_status: _FnResultStatus
     var result_error_message: _FnResultErrorMessage
+    var column_index: _PQfnumber.type
+    var column_type: _PQftype.type
+    var column_name: _FnFname
 
     def __init__(
         out self,
@@ -163,6 +172,9 @@ struct PgSymbols(Copyable, Movable):
         socket_fn: _FnSocket,
         result_status: _FnResultStatus,
         result_error_message: _FnResultErrorMessage,
+        column_index: _PQfnumber.type,
+        column_type: _PQftype.type,
+        column_name: _FnFname,
     ):
         self.connectdb = connectdb
         self.status = status
@@ -187,6 +199,9 @@ struct PgSymbols(Copyable, Movable):
         self.socket_fn = socket_fn
         self.result_status = result_status
         self.result_error_message = result_error_message
+        self.column_index = column_index
+        self.column_type = column_type
+        self.column_name = column_name
 
 
 def c_string(s: String) -> CharPtr:
@@ -267,4 +282,7 @@ def open_libpq() raises -> PgSymbols:
         socket_fn=_PQsocket.load(dlh),
         result_status=_PQresultStatus.load(dlh),
         result_error_message=_PQresultErrorMessage.load(dlh),
+        column_index=_PQfnumber.load(dlh),
+        column_type=_PQftype.load(dlh),
+        column_name=_PQfname.load(dlh),
     )

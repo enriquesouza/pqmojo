@@ -299,6 +299,47 @@ def decode_i4_array(addr: Int, nbytes: Int32) raises -> List[Int32]:
     return out^
 
 
+def decode_i8_array(addr: Int, nbytes: Int32) raises -> List[Int64]:
+    """int8[] wire bytes -> List[Int64] (1-D).
+
+    Same header layout as int4[]; elements are 8-byte big-endian. NULL
+    elements are dropped, parity with every other array reader."""
+    var out = List[Int64]()
+    if Int(nbytes) < 12:
+        raise Error("pqmojo: binary array header truncated")
+    var p = CharPtr(unsafe_from_address=addr)
+    var ndim = Int(_read_i32_be(p, 0))
+    if ndim == 0:
+        return out^
+    if ndim != 1:
+        raise Error(
+            "pqmojo: binary int8[] supports 1-D only (got ndim="
+            + String(ndim) + ")"
+        )
+    if Int(nbytes) < 20:
+        raise Error("pqmojo: binary array header truncated")
+    var n = Int(_read_i32_be(p, 12))
+    if n < 0:
+        raise Error("pqmojo: binary array negative element count")
+    var cursor = 20
+    for _ in range(n):
+        if cursor + 4 > Int(nbytes):
+            raise Error("pqmojo: binary int8[] element header truncated")
+        var elen = Int(_read_i32_be(p, cursor))
+        cursor += 4
+        if elen == -1:
+            continue  # NULL element: dropped, parity with the text splitter
+        if elen != 8:
+            raise Error("pqmojo: binary int8[] element is not 8 bytes")
+        if cursor + 8 > Int(nbytes):
+            raise Error("pqmojo: binary int8[] element data truncated")
+        out.append(bitcast[src_dtype=DType.uint64, src_width=1, dtype=DType.int64](
+            Scalar[DType.uint64](_read_u64_be(p, cursor))
+        ))
+        cursor += 8
+    return out^
+
+
 def decode_text_array(addr: Int, nbytes: Int32) raises -> List[String]:
     """text[] wire bytes -> List[String] (1-D, raw UTF8 element copies).
 
