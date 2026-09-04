@@ -439,3 +439,42 @@ def render_postgres_timestamp_text(micros: Int64) -> String:
         out += "0"
     out += String(ss)
     return out
+
+
+def render_date_text(year: Int, month: Int, day: Int) -> String:
+    """Civil date -> "YYYY-MM-DD" (zero-padded month/day). The origin's
+    availability-window SQL bound formatter: year renders in full, month
+    and day gain a leading 0 below 10.
+
+    origin: alugue-mojo-api services/client_reads/availability_service.mojo
+    """
+    var text = String(year)
+    text += "-"
+    if month < 10:
+        text += "0"
+    text += String(month)
+    text += "-"
+    if day < 10:
+        text += "0"
+    text += String(day)
+    return text
+
+
+def render_hhmm_text(minutes: Int) -> String:
+    """Minutes since midnight -> "HH:MM" (zero-padded). The origin's
+    availability run-window formatter: hour digits are minutes // 60,
+    minute digits are minutes % 60.
+
+    origin: alugue-mojo-api services/client_reads/availability_service.mojo
+    """
+    var hour_digits = minutes // 60
+    var minute_digits = minutes % 60
+    var text = String("")
+    if hour_digits < 10:
+        text += "0"
+    text += String(hour_digits)
+    text += ":"
+    if minute_digits < 10:
+        text += "0"
+    text += String(minute_digits)
+    return text

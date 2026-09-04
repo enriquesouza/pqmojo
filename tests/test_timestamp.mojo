@@ -17,6 +17,8 @@ from pqmojo import (
     parse_instant,
     parse_postgres_timestamp_bytes_lenient,
     parse_postgres_timestamp_bytes_to_microseconds,
+    render_date_text,
+    render_hhmm_text,
     render_postgres_timestamp_text,
     unix_seconds_now,
 )
@@ -510,6 +512,28 @@ def main() raises:
 
     # ---- unix_seconds_now ----
     check(unix_seconds_now() > 1_700_000_000, "unix_seconds_now plausible")
+    checks += 1
+
+    # ---- render_date_text: zero-padded YYYY-MM-DD ----
+    check(render_date_text(2026, 9, 1) == "2026-09-01", "date 2026-9-1")
+    checks += 1
+    check(render_date_text(2026, 12, 31) == "2026-12-31", "date 2026-12-31")
+    checks += 1
+    check(render_date_text(999, 1, 2) == "999-01-02", "date short year")
+    checks += 1
+    check(render_date_text(2026, 2, 29) == "2026-02-29", "date feb29 form")
+    checks += 1
+
+    # ---- render_hhmm_text: zero-padded HH:MM ----
+    check(render_hhmm_text(0) == "00:00", "hhmm midnight")
+    checks += 1
+    check(render_hhmm_text(60) == "01:00", "hhmm 60")
+    checks += 1
+    check(render_hhmm_text(1439) == "23:59", "hhmm 1439")
+    checks += 1
+    check(render_hhmm_text(1440) == "24:00", "hhmm 1440 (end-of-day law)")
+    checks += 1
+    check(render_hhmm_text(605) == "10:05", "hhmm 605")
     checks += 1
 
     print(

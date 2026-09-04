@@ -156,6 +156,11 @@ Public API:
     render_postgres_timestamp_text(micros) -> String
                                            "YYYY-MM-DD HH:MM:SS" (secs
                                            resolution, zero-padded)
+    render_date_text(y, m, d) -> String   "YYYY-MM-DD" zero-padded (the
+                                           availability SQL-bound shape)
+    render_hhmm_text(minutes) -> String   "HH:MM" zero-padded (minutes
+                                           since midnight; run-window
+                                           shape)
     parse_instant(raw) -> InstantParse     human-input validation:
                                            DD/MM/YYYY HH:MM (16 chars),
                                            YYYY-MM-DD[T| ]HH:MM[:SS], "Z"
@@ -233,6 +238,8 @@ from .timestamp import (
     parse_instant,
     parse_postgres_timestamp_bytes_lenient,
     parse_postgres_timestamp_bytes_to_microseconds,
+    render_date_text,
+    render_hhmm_text,
     render_postgres_timestamp_text,
     unix_seconds_now,
 )
